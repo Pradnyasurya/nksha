@@ -1,4 +1,4 @@
-# Map Diary
+# nksha
 
 A personal web app that turns an imported Google Maps Timeline into a beautiful visual record of a person's travels — animated map playback, dashboards, and heatmaps. Users must import their own Google Timeline export; nothing is fetched from Google automatically.
 
@@ -23,6 +23,10 @@ _Avoid_: vacation, journey, excursion
 **Home**:
 The single Place the user has explicitly designated as their base. The anchor for trip inference and away-time stats; never inferred silently.
 _Avoid_: primary residence, default location
+
+**Movement**:
+A travel span between Visits, imported from an activity segment with a mode (driving/walking/cycling/transit) and a distance. Feeds the dashboard's distance-by-mode; never edited by hand.
+_Avoid_: trip (that's a named window of days), route, leg, transfer
 
 ### Ingestion
 
