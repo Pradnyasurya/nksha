@@ -170,13 +170,16 @@ export default function MapView() {
     source.setData(visitsToGeoJson(focusedVisits, placeIndex(places)));
 
     const match = yearColorMatch(focusedVisits);
-    const circleColor = [
-      "match",
-      ["get", "year"],
-      ...match.flat(),
-      "#888888",
-    ] as unknown as ExpressionSpecification;
-    map.setPaintProperty(POINT_LAYER, "circle-color", circleColor);
+    if (match.length > 0) {
+      // An empty match list yields an invalid expression (maplibre throws).
+      const circleColor = [
+        "match",
+        ["get", "year"],
+        ...match.flat(),
+        "#888888",
+      ] as unknown as ExpressionSpecification;
+      map.setPaintProperty(POINT_LAYER, "circle-color", circleColor);
+    }
   }, [places, focusedVisits, styleVersion]);
 
   const selectedPlace =
@@ -190,7 +193,9 @@ export default function MapView() {
 
   return (
     <div className="relative h-full w-full">
-      <div ref={containerRef} className="absolute inset-0" />
+      {/* h-full w-full (not absolute inset-0): maplibre's own
+          .maplibregl-map rule would override a layered .absolute. */}
+      <div ref={containerRef} className="h-full w-full" />
 
       {selectedPlace && selectedVisit && (
         <VisitDetailCard

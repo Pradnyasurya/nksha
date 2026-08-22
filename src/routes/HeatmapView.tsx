@@ -182,33 +182,35 @@ export default function HeatmapView() {
     }
   }, [weighted, maxWeightHours, mapReady]);
 
-  if (visits.length === 0) {
-    return (
-      <div className="flex h-full items-center justify-center p-6 text-center">
-        <div>
-          <p className="text-sm font-medium">No heat yet</p>
-          <p className="mt-1 max-w-sm text-sm text-muted-foreground">
-            The heatmap glows where you have lived your hours. Import your
-            Google Timeline to light it up.
-          </p>
-          <Link
-            to="/import"
-            className="mt-3 inline-block rounded-md bg-primary px-3 py-1.5 text-sm text-primary-foreground hover:opacity-90"
-          >
-            Import now
-          </Link>
-        </div>
-      </div>
-    );
-  }
-
   const totalWeightedHours =
     weighted.reduce((sum, w) => sum + w.dwellMs, 0) / 3_600_000;
 
+  // The map host must stay mounted on every render: the init effect has empty
+  // deps, so a conditional early-return while visits are still loading would
+  // leave the ref null forever and the map would never be created.
   return (
     <div className="relative h-full w-full">
-      <div ref={containerRef} className="absolute inset-0" />
+      <div ref={containerRef} className="h-full w-full" />
 
+      {visits.length === 0 && (
+        <div className="absolute inset-0 z-20 flex items-center justify-center bg-background/90 p-6 text-center">
+          <div>
+            <p className="text-sm font-medium">No heat yet</p>
+            <p className="mt-1 max-w-sm text-sm text-muted-foreground">
+              The heatmap glows where you have lived your hours. Import your
+              Google Timeline to light it up.
+            </p>
+            <Link
+              to="/import"
+              className="mt-3 inline-block rounded-md bg-primary px-3 py-1.5 text-sm text-primary-foreground hover:opacity-90"
+            >
+              Import now
+            </Link>
+          </div>
+        </div>
+      )}
+
+      {visits.length > 0 && (
       <div className="absolute left-1/2 top-4 z-10 w-[min(92%,30rem)] -translate-x-1/2 rounded-lg border border-border bg-card/95 p-3 shadow backdrop-blur">
         <div className="flex items-baseline justify-between gap-2">
           <h1 className="text-sm font-medium">Dwell heatmap</h1>
@@ -266,7 +268,9 @@ export default function HeatmapView() {
           so they stay smooth on large histories.
         </p>
       </div>
+      )}
 
+      {visits.length > 0 && (
       <div
         aria-hidden
         className="absolute bottom-4 left-4 z-10 h-2.5 w-44 rounded-full"
@@ -275,6 +279,7 @@ export default function HeatmapView() {
             "linear-gradient(to right, #1e3a8a, #1d4ed8, #0891b2, #16a34a, #eab308, #dc2626)",
         }}
       />
+      )}
     </div>
   );
 }

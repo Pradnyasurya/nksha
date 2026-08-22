@@ -11,6 +11,11 @@ export default defineConfig({
       "@": fileURLToPath(new URL("./src", import.meta.url)),
     },
   },
+  optimizeDeps: {
+    // Pre-bundling maplibre-gl drops its sibling maplibre-gl-worker.mjs, which
+    // then 404s in dev and kills the render pipeline. Serve dist as-is.
+    exclude: ["maplibre-gl"],
+  },
   test: {
     environment: "jsdom",
     setupFiles: ["./src/test/setup.ts"],

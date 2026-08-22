@@ -330,25 +330,7 @@ export default function PlaybackView() {
     }
   }
 
-  if (visits.length === 0 || !range) {
-    return (
-      <div className="flex h-full items-center justify-center p-6 text-center">
-        <div>
-          <p className="text-sm font-medium">Nothing to play back yet</p>
-          <p className="mt-1 max-w-sm text-sm text-muted-foreground">
-            Import your Google Timeline first — playback animates the journeys
-            between your imported visits.
-          </p>
-          <Link
-            to="/import"
-            className="mt-3 inline-block rounded-md bg-primary px-3 py-1.5 text-sm text-primary-foreground hover:opacity-90"
-          >
-            Import now
-          </Link>
-        </div>
-      </div>
-    );
-  }
+  const hasData = visits.length > 0 && !!range;
 
   const frame = timeline && t !== null ? renderAt(timeline, t) : null;
   const scrubFraction =
@@ -370,20 +352,42 @@ export default function PlaybackView() {
     setT(next);
   }
 
+  // The map host must stay mounted on every render: the init effect below has
+  // empty deps, so a conditional early-return while visits are still loading
+  // would leave the ref null forever and the map would never be created.
   return (
     <div className="relative h-full w-full">
-      <div ref={containerRef} className="absolute inset-0" />
+      <div ref={containerRef} className="h-full w-full" />
 
-      {frame?.dot && (
-        <div className="pointer-events-none absolute left-1/2 top-4 z-10 -translate-x-1/2 rounded-md bg-card/95 px-3 py-1.5 text-xs shadow">
-          {frame.phase === "stay"
-            ? `Staying at ${placeName(places, frame.activePlaceId)}`
-            : frame.phase === "travel"
-              ? "In transit…"
-              : ""}
+      {!hasData && (
+        <div className="absolute inset-0 z-20 flex items-center justify-center bg-background/90 p-6 text-center">
+          <div>
+            <p className="text-sm font-medium">Nothing to play back yet</p>
+            <p className="mt-1 max-w-sm text-sm text-muted-foreground">
+              Import your Google Timeline first — playback animates the journeys
+              between your imported visits.
+            </p>
+            <Link
+              to="/import"
+              className="mt-3 inline-block rounded-md bg-primary px-3 py-1.5 text-sm text-primary-foreground hover:opacity-90"
+            >
+              Import now
+            </Link>
+          </div>
         </div>
       )}
 
+      {frame?.dot && (
+      <div className="pointer-events-none absolute left-1/2 top-4 z-10 -translate-x-1/2 rounded-md bg-card/95 px-3 py-1.5 text-xs shadow">
+        {frame.phase === "stay"
+          ? `Staying at ${placeName(places, frame.activePlaceId)}`
+          : frame.phase === "travel"
+            ? "In transit…"
+            : ""}
+      </div>
+      )}
+
+      {hasData && (
       <div className="absolute inset-x-0 bottom-0 z-10 border-t border-border bg-card/95 p-3 backdrop-blur">
         <div className="mx-auto flex max-w-4xl flex-col gap-2">
           <input
@@ -533,6 +537,7 @@ export default function PlaybackView() {
           </p>
         </div>
       </div>
+      )}
     </div>
   );
 }

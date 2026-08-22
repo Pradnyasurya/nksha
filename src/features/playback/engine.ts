@@ -88,8 +88,11 @@ export function buildPlaybackTimeline(
   const included = visits
     .filter(
       (v) =>
+        // Inclusive so a visit starting exactly at the range end (e.g. the
+        // open-ended "still here" stay that defines defaultPlaybackRange)
+        // still counts as an arrival instead of vanishing.
         placesById.has(v.placeId) &&
-        v.startTimeMs < range.endMs &&
+        v.startTimeMs <= range.endMs &&
         effectiveEnd(v, range) > range.startMs,
     )
     .sort(chronological);
