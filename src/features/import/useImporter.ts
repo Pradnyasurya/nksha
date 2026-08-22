@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { ParsedTimeline } from "@/features/import/parse";
-import { insertImportBundle } from "@/db/repo";
+import { insertImportBundle, runTripInference } from "@/db/repo";
 import type {
   ImportWorkerRequest,
   ImportWorkerResponse,
@@ -22,6 +22,7 @@ export interface ImportReport {
   visitsSkipped: number;
   firstVisitTimeMs: number | null;
   lastVisitTimeMs: number | null;
+  tripsInferred: number;
 }
 
 /**
@@ -124,11 +125,13 @@ async function insertParsed(
       createdAt: now,
     })),
   });
+  const tripsInferred = await runTripInference();
   return {
     placesFound: parsed.places.length,
     visitsCreated: outcome.visitsCreated,
     visitsSkipped: outcome.visitsSkipped,
     firstVisitTimeMs: outcome.firstVisitTimeMs,
     lastVisitTimeMs: outcome.lastVisitTimeMs,
+    tripsInferred,
   };
 }

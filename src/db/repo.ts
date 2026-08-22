@@ -12,6 +12,7 @@ import {
   findOverlappingTrip,
   suggestTripName,
 } from "@/features/trips/trips";
+import { inferTripWindows } from "@/features/trips/inference";
 
 /**
  * Core data operations shared across features. Feature-specific logic lives
@@ -289,5 +290,79 @@ export async function tripsByStart(): Promise<Trip[]> {
   return (await getDb().trips.toArray()).sort((a, b) =>
     a.startDay.localeCompare(b.startDay),
   );
+}
+
+// ---------------------------------------------------------------------------
+// Trip inference (#7)
+// ---------------------------------------------------------------------------
+
+/**
+ * Mint inferred trips from current data. Runs only at import time or via
+ * the explicit re-run action; declared trips are never touched, dismissed
+ * ranges are honoured, same input yields same output.
+ */
+export async function runTripInference(): Promise<number> {
+  const db = getDb();
+  const [visits, places, trips, dismissedRanges] = await Promise.all([
+    db.visits.toArray(),
+    db.places.toArray(),
+    db.trips.toArray(),
+    getDismissedTripRanges(),
+  ]);
+  const home = places.find((p) => p.isHome === 1);
+
+  return db.transaction("rw", db.trips, async () => {
+    let created = 0;
+    for (const window of inferTripWindows({
+      visits,
+      places,
+      homePlaceId: home?.id ?? null,
+      trips,
+      dismissedRanges,
+    })) {
+      const exists = await db.trips
+        .where("startDay")
+        .equals(window.startDay)
+        .first();
+      if (exists) continue;
+      await db.trips.put({
+        id: crypto.randomUUID(),
+        name: window.name,
+        startDay: window.startDay,
+        endDay: window.endDay,
+        provenance: "inferred",
+        createdAt: Date.now(),
+      });
+      created += 1;
+    }
+    return created;
+  });
+}
+
+/** Delete an inferred trip AND remember the range so imports can't resurrect it. */
+export async function dismissInferredTrip(tripId: string): Promise<void> {
+  const trip = await getDb().trips.get(tripId);
+  if (!trip) return;
+  if (trip.provenance !== "inferred") {
+    throw new Error("Only inferred trips can be dismissed");
+  }
+  await deleteTrip(tripId);
+  await addDismissedTripRange({
+    startDay: trip.startDay,
+    endDay: trip.endDay,
+  });
+}
+
+/**
+ * Re-run suggestions from scratch: wipe all inferred trips (declared ones
+ * untouched), then regenerate honouring dismissed memory.
+ */
+export async function rerunTripInference(): Promise<number> {
+  const db = getDb();
+  const inferred = await db.trips.where("provenance").equals("inferred").toArray();
+  for (const trip of inferred) {
+    await db.trips.delete(trip.id);
+  }
+  return runTripInference();
 }
 

@@ -6,7 +6,9 @@ import type { Trip } from "@/db/schema";
 import {
   createDeclaredTrip,
   deleteTrip,
+  dismissInferredTrip,
   renameTrip,
+  rerunTripInference,
   tripsByStart,
 } from "@/db/repo";
 import { visitsInTrip, suggestTripName } from "@/features/trips/trips";
@@ -19,6 +21,7 @@ export default function TripsView() {
   const [startDay, setStartDay] = useState("");
   const [endDay, setEndDay] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [rerunning, setRerunning] = useState(false);
 
   async function submit(event: React.FormEvent) {
     event.preventDefault();
@@ -35,7 +38,20 @@ export default function TripsView() {
 
   return (
     <div className="mx-auto max-w-3xl space-y-4 overflow-y-auto p-6">
-      <h1 className="text-xl font-semibold">Trips</h1>
+      <div className="flex items-center justify-between">
+        <h1 className="text-xl font-semibold">Trips</h1>
+        <button
+          type="button"
+          disabled={rerunning}
+          className="rounded-md border border-border px-3 py-1.5 text-sm hover:bg-muted disabled:pointer-events-none disabled:opacity-50"
+          onClick={() => {
+            setRerunning(true);
+            void rerunTripInference().finally(() => setRerunning(false));
+          }}
+        >
+          {rerunning ? "Re-running…" : "Re-run suggestions"}
+        </button>
+      </div>
 
       <form
         onSubmit={submit}
@@ -176,9 +192,13 @@ function TripRow({ trip, visitCount }: { trip: Trip; visitCount: number }) {
             <button
               type="button"
               className="rounded-md bg-destructive px-2 py-1 text-xs text-white"
-              onClick={() => void deleteTrip(trip.id)}
+              onClick={() =>
+                void (trip.provenance === "inferred"
+                  ? dismissInferredTrip(trip.id)
+                  : deleteTrip(trip.id))
+              }
             >
-              Delete for sure
+              {trip.provenance === "inferred" ? "Dismiss for sure" : "Delete for sure"}
             </button>
             <button
               type="button"

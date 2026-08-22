@@ -89,6 +89,8 @@ export default function ImportView() {
             <dd>{state.report.visitsCreated}</dd>
             <dt className="text-muted-foreground">Visits skipped (duplicates)</dt>
             <dd>{state.report.visitsSkipped}</dd>
+            <dt className="text-muted-foreground">Trips suggested</dt>
+            <dd>{state.report.tripsInferred}</dd>
             <dt className="text-muted-foreground">Covered range</dt>
             <dd>
               {formatDay(state.report.firstVisitTimeMs)} –{" "}

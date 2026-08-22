@@ -11,7 +11,7 @@ function effectiveEnd(visit: Visit, clampEndMs?: number): number {
   return Math.max(raw, visit.startTimeMs);
 }
 
-function coveredDayKeys(startMs: number, endMs: number): string[] {
+export function coveredDayKeys(startMs: number, endMs: number): string[] {
   return eachDay(dayKey(startMs), dayKey(endMs));
 }
 
