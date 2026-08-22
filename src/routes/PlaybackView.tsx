@@ -3,6 +3,7 @@ import { Map as MaplibreMap, NavigationControl } from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
+import { ListVideo, Play } from "lucide-react";
 import { getDb } from "@/db/db";
 import type { Place, Visit } from "@/db/schema";
 import { getBasemapStyle } from "@/db/repo";
@@ -10,6 +11,7 @@ import {
   buildPlaybackTimeline,
   defaultPlaybackRange,
   renderAt,
+  travelledDistanceMeters,
 } from "@/features/playback/engine";
 import {
   applyDot,
@@ -33,6 +35,7 @@ import {
   encodePlaybackVideo,
   ExportCancelledError,
 } from "@/features/export/videoExport";
+import { cn } from "@/lib/cn";
 
 const SPEEDS = [
   { multiplier: 60, label: "1 min/s" },
@@ -45,6 +48,10 @@ const SPEEDS = [
 const READOUT_FORMAT = new Intl.DateTimeFormat(undefined, {
   dateStyle: "medium",
   timeStyle: "short",
+});
+
+const DATE_ONLY = new Intl.DateTimeFormat(undefined, {
+  dateStyle: "medium",
 });
 
 type ExportState =
@@ -100,6 +107,9 @@ export default function PlaybackView() {
   if (session !== null && clock.session !== session) {
     setClock({ session, t: range!.startMs, playing: false });
   }
+  const [startedSession, setStartedSession] = useState("");
+  const started = session !== null && startedSession === session;
+  const [showChapters, setShowChapters] = useState(false);
   const t = clock.session !== "" && clock.session === session ? clock.t : null;
   const playing = clock.playing && clock.session === session;
   const setT = (next: number): void =>
@@ -332,6 +342,54 @@ export default function PlaybackView() {
 
   const hasData = visits.length > 0 && !!range;
 
+  // Year presets: one tap to frame the story on a single year.
+  const presetYears = useMemo(
+    () =>
+      [...new Set(visits.map((v) => new Date(v.startTimeMs).getFullYear()))]
+        .filter((y) => Number.isFinite(y))
+        .sort((a, b) => b - a),
+    [visits],
+  );
+
+  function applyPreset(year: number | null): void {
+    if (year === null) {
+      setCustomFrom(null);
+      setCustomTo(null);
+    } else {
+      setCustomFrom(`${year}-01-01`);
+      setCustomTo(`${year}-12-31`);
+    }
+  }
+
+  // Chapters: every arrival is a scene in the story (#playback-story).
+  const chapters = useMemo(() => {
+    if (!timeline) return [];
+    const placeById = new Map(places.map((p) => [p.id, p]));
+    const visitById = new Map(visits.map((v) => [v.id ?? -1, v]));
+    return timeline.arrivals.map((arrival) => {
+      const visit = visitById.get(arrival.visitId);
+      const place = visit ? placeById.get(visit.placeId) : undefined;
+      return {
+        atMs: arrival.atMs,
+        name: place?.name || "Unnamed place",
+      };
+    });
+  }, [timeline, places, visits]);
+
+  const tripStats =
+    timeline && t !== null
+      ? {
+          distanceMeters: travelledDistanceMeters(timeline, t),
+          elapsedMs: t - timeline.rangeStartMs,
+        }
+      : null;
+
+  function beginStory(): void {
+    if (session === null) return;
+    setStartedSession(session);
+    setPlaying(true);
+  }
+
   const frame = timeline && t !== null ? renderAt(timeline, t) : null;
   const scrubFraction =
     timeline && t !== null
@@ -364,7 +422,7 @@ export default function PlaybackView() {
           <div>
             <p className="text-sm font-medium">Nothing to play back yet</p>
             <p className="mt-1 max-w-sm text-sm text-muted-foreground">
-              Import your Google Timeline first — playback animates the journeys
+              Import your Google Timeline first — playback animates the trips
               between your imported visits.
             </p>
             <Link
@@ -377,8 +435,41 @@ export default function PlaybackView() {
         </div>
       )}
 
+      {/* Cinematic title card: the story starts deliberately, not abruptly. */}
+      {hasData && !started && (
+        <div className="absolute inset-0 z-20 flex items-center justify-center bg-background/85 p-6 text-center backdrop-blur-sm">
+          <div className="flex flex-col items-center gap-3">
+            <p className="text-[11px] font-medium uppercase tracking-[0.3em] text-muted-foreground">
+              nksha story
+            </p>
+            <h1 className="font-display text-4xl font-semibold leading-tight">
+              {storyTitle(range!)}
+            </h1>
+            <p className="text-sm text-muted-foreground">
+              {totalInRange} visits ·{" "}
+              {Math.round((range!.endMs - range!.startMs) / 86_400_000)} days of
+              movement
+            </p>
+            <button
+              type="button"
+              onClick={beginStory}
+              className="mt-2 flex min-h-12 items-center gap-2 rounded-lg bg-primary px-6 text-base font-medium text-primary-foreground shadow hover:opacity-90"
+            >
+              <Play size={17} aria-hidden /> Begin the trip
+            </button>
+            <button
+              type="button"
+              className="min-h-11 px-2 text-xs text-muted-foreground underline underline-offset-2 hover:text-foreground"
+              onClick={() => session !== null && setStartedSession(session)}
+            >
+              Explore the timeline manually instead
+            </button>
+          </div>
+        </div>
+      )}
+
       {frame?.dot && (
-      <div className="pointer-events-none absolute left-1/2 top-4 z-10 -translate-x-1/2 rounded-md bg-card/95 px-3 py-1.5 text-xs shadow">
+      <div className="pointer-events-none absolute left-1/2 top-4 z-10 -translate-x-1/2 whitespace-nowrap rounded-md bg-card/95 px-3 py-1.5 text-xs shadow">
         {frame.phase === "stay"
           ? `Staying at ${placeName(places, frame.activePlaceId)}`
           : frame.phase === "travel"
@@ -390,13 +481,85 @@ export default function PlaybackView() {
       {hasData && (
       <div className="absolute inset-x-0 bottom-0 z-10 border-t border-border bg-card/95 p-3 backdrop-blur">
         <div className="mx-auto flex max-w-4xl flex-col gap-2">
+          <div className="flex flex-wrap items-center gap-1.5 text-xs">
+            <span className="mr-1 font-medium">Story:</span>
+            <button
+              type="button"
+              aria-pressed={customFrom === null && customTo === null}
+              onClick={() => applyPreset(null)}
+              className={cn(
+                "min-h-9 rounded-full border px-3 py-1.5",
+                customFrom === null && customTo === null
+                  ? "border-primary bg-accent font-medium"
+                  : "border-border hover:bg-muted",
+              )}
+            >
+              All time
+            </button>
+            {presetYears.map((y) => {
+              const active = customFrom === `${y}-01-01` && customTo === `${y}-12-31`;
+              return (
+                <button
+                  key={y}
+                  type="button"
+                  aria-pressed={active}
+                  onClick={() => applyPreset(y)}
+                  className={cn(
+                    "min-h-9 rounded-full border px-3 py-1.5 tabular-nums",
+                    active
+                      ? "border-primary bg-accent font-medium"
+                      : "border-border hover:bg-muted",
+                  )}
+                >
+                  {y} recap
+                </button>
+              );
+            })}
+            {chapters.length > 0 && (
+              <button
+                type="button"
+                aria-expanded={showChapters}
+                onClick={() => setShowChapters((v) => !v)}
+                className="ml-auto flex min-h-9 items-center gap-1.5 rounded-full border border-border px-3 py-1.5 hover:bg-muted"
+              >
+                <ListVideo size={14} aria-hidden />
+                Chapters ({chapters.length})
+              </button>
+            )}
+          </div>
+
+          {showChapters && chapters.length > 0 && (
+            <ol
+              aria-label="Trip chapters"
+              className="max-h-36 overflow-y-auto rounded-md border border-border bg-background p-1 text-xs"
+            >
+              {chapters.map((chapter, index) => (
+                <li key={`${chapter.atMs}-${index}`}>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      tRef.current = chapter.atMs;
+                      setT(chapter.atMs);
+                    }}
+                    className="flex min-h-9 w-full items-center justify-between gap-3 rounded px-2 py-1.5 text-left hover:bg-muted"
+                  >
+                    <span className="truncate">{chapter.name}</span>
+                    <span className="shrink-0 tabular-nums text-muted-foreground">
+                      {DATE_ONLY.format(new Date(chapter.atMs))}
+                    </span>
+                  </button>
+                </li>
+              ))}
+            </ol>
+          )}
+
           <input
             aria-label="Scrub through time"
             type="range"
             min={0}
             max={1000}
             value={Math.round(scrubFraction * 1000)}
-            disabled={exporting}
+            disabled={exporting || !started}
             onChange={(event) =>
               scrub(Number(event.target.value) / 1000)
             }
@@ -405,7 +568,7 @@ export default function PlaybackView() {
           <div className="flex flex-wrap items-center gap-2 text-xs">
             <button
               type="button"
-              className="rounded-md bg-primary px-3 py-1.5 font-medium text-primary-foreground hover:opacity-90"
+              className="flex min-h-11 items-center rounded-md bg-primary px-4 py-2 font-medium text-primary-foreground hover:opacity-90"
               disabled={exporting}
               onClick={() => setPlaying((was) => !was)}
             >
@@ -416,7 +579,7 @@ export default function PlaybackView() {
               value={speedMultiplier}
               disabled={exporting}
               onChange={(event) => setSpeedMultiplier(Number(event.target.value))}
-              className="h-8 rounded-md border border-border bg-background px-1.5"
+              className="h-11 rounded-md border border-border bg-background px-1.5"
             >
               {SPEEDS.map((speed) => (
                 <option key={speed.multiplier} value={speed.multiplier}>
@@ -427,6 +590,15 @@ export default function PlaybackView() {
             <span className="tabular-nums text-muted-foreground">
               {t !== null ? READOUT_FORMAT.format(new Date(t)) : "—"}
             </span>
+            {tripStats && (
+              <span className="tabular-nums text-muted-foreground">
+                ·{" "}
+                {tripStats.distanceMeters >= 1000
+                  ? `${Math.round(tripStats.distanceMeters / 1000).toLocaleString()} km travelled`
+                  : `${Math.round(tripStats.distanceMeters)} m travelled`}{" "}
+                · {formatElapsed(tripStats.elapsedMs)} elapsed
+              </span>
+            )}
             <span className="tabular-nums text-muted-foreground">
               {frame?.arrivedCount ?? 0}/{totalInRange} visits
             </span>
@@ -460,7 +632,7 @@ export default function PlaybackView() {
             </label>
             <button
               type="button"
-              className="rounded-md border border-border px-3 py-1.5 font-medium hover:bg-muted disabled:pointer-events-none disabled:opacity-50"
+              className="min-h-11 rounded-md border border-border px-4 py-2 font-medium hover:bg-muted disabled:pointer-events-none disabled:opacity-50"
               disabled={exporting}
               onClick={beginExportRequest}
             >
@@ -473,7 +645,10 @@ export default function PlaybackView() {
               <p>
                 At this speed the selected range produces a ~
                 {Math.round(exportState.plan.durationSec / 60)} minute video (
-                {exportState.plan.frameCount} frames). Continue?
+                {exportState.plan.frameCount} frames, {EXPORT_WIDTH}×
+                {EXPORT_HEIGHT}, ~
+                {Math.max(1, Math.round(exportState.plan.frameCount / 30))} s to
+                render). Continue?
               </p>
               <div className="mt-2 flex gap-2">
                 <button
@@ -544,6 +719,23 @@ export default function PlaybackView() {
 
 function endOfDayMs(dayKeyStr: string): number {
   return dayKeyToDate(dayKeyStr).getTime() + 86_400_000 - 1;
+}
+
+/** Cinematic headline for the title card. */
+function storyTitle(range: { startMs: number; endMs: number }): string {
+  const startYear = new Date(range.startMs).getFullYear();
+  const endYear = new Date(range.endMs).getFullYear();
+  if (startYear === endYear) return `Your ${startYear}`;
+  const years = endYear - startYear;
+  return `Your ${years} year${years === 1 ? "" : "s"}, ${startYear}–${endYear}`;
+}
+
+function formatElapsed(ms: number): string {
+  const minutes = Math.floor(ms / 60_000);
+  if (minutes < 60) return `${minutes} min`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 48) return `${hours} h`;
+  return `${Math.round(hours / 24)} d`;
 }
 
 function toDayKeyInput(ms: number): string {

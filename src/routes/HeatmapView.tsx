@@ -213,7 +213,7 @@ export default function HeatmapView() {
       {visits.length > 0 && (
       <div className="absolute left-1/2 top-4 z-10 w-[min(92%,30rem)] -translate-x-1/2 rounded-lg border border-border bg-card/95 p-3 shadow backdrop-blur">
         <div className="flex items-baseline justify-between gap-2">
-          <h1 className="text-sm font-medium">Dwell heatmap</h1>
+          <h1 className="font-display text-base font-semibold">Dwell heatmap</h1>
           <span className="text-[11px] tabular-nums text-muted-foreground">
             {selected && `${selected.fromYear}–${selected.toYear} · `}
             {Math.round(totalWeightedHours).toLocaleString()} h across{" "}
@@ -272,13 +272,19 @@ export default function HeatmapView() {
 
       {visits.length > 0 && (
       <div
-        aria-hidden
-        className="absolute bottom-4 left-4 z-10 h-2.5 w-44 rounded-full"
-        style={{
-          background:
-            "linear-gradient(to right, #1e3a8a, #1d4ed8, #0891b2, #16a34a, #eab308, #dc2626)",
-        }}
-      />
+        className="absolute bottom-4 left-4 z-10 flex items-center gap-2 rounded-full border border-border bg-card/95 px-3 py-1.5 shadow backdrop-blur"
+      >
+        <span className="text-[10px] font-medium text-muted-foreground">Fewer hours</span>
+        <span
+          aria-hidden
+          className="h-2.5 w-28 rounded-full sm:w-44"
+          style={{
+            background:
+              "linear-gradient(to right, #1e3a8a, #1d4ed8, #0891b2, #16a34a, #eab308, #dc2626)",
+          }}
+        />
+        <span className="text-[10px] font-medium text-muted-foreground">More hours</span>
+      </div>
       )}
     </div>
   );
