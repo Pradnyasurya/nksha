@@ -16,9 +16,6 @@ jobs:
   verify:
     name: Verify
     runs-on: ubuntu-latest
-    # Gracefully skip until the app scaffold (package.json) exists; the job
-    # becomes active automatically and branch protection then enforces it.
-    if: ${{ hashFiles('package.json') != '' }}
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
