@@ -4,8 +4,14 @@ import type {
   DismissedTripRange,
   ImportRecord,
   Place,
+  Trip,
   Visit,
 } from "./schema";
+import {
+  assertValidTripWindow,
+  findOverlappingTrip,
+  suggestTripName,
+} from "@/features/trips/trips";
 
 /**
  * Core data operations shared across features. Feature-specific logic lives
@@ -235,3 +241,53 @@ export async function insertImportBundle(
 function isDuplicateKeyError(err: unknown): boolean {
   return err instanceof Error && err.name === "ConstraintError";
 }
+
+// ---------------------------------------------------------------------------
+// Trips (#6)
+// ---------------------------------------------------------------------------
+
+export async function createDeclaredTrip(
+  name: string,
+  startDay: string,
+  endDay: string,
+): Promise<Trip> {
+  assertValidTripWindow(startDay, endDay);
+  const db = getDb();
+  const existing = await db.trips.toArray();
+  const conflict = findOverlappingTrip(existing, startDay, endDay);
+  if (conflict) {
+    throw new Error(
+      `This window overlaps "${conflict.name}" (${conflict.startDay} – ${conflict.endDay}). Shrink the range or delete that trip first — a visit can belong to at most one trip.`,
+    );
+  }
+  const trip: Trip = {
+    id: crypto.randomUUID(),
+    name: name.trim() || suggestTripName(startDay, endDay),
+    startDay,
+    endDay,
+    provenance: "declared",
+    createdAt: Date.now(),
+  };
+  await db.trips.put(trip);
+  return trip;
+}
+
+export async function renameTrip(tripId: string, name: string): Promise<void> {
+  const db = getDb();
+  await db.transaction("rw", db.trips, async () => {
+    const trip = await db.trips.get(tripId);
+    if (!trip) throw new Error(`Unknown trip: ${tripId}`);
+    await db.trips.put({ ...trip, name });
+  });
+}
+
+export async function deleteTrip(tripId: string): Promise<void> {
+  await getDb().trips.delete(tripId);
+}
+
+export async function tripsByStart(): Promise<Trip[]> {
+  return (await getDb().trips.toArray()).sort((a, b) =>
+    a.startDay.localeCompare(b.startDay),
+  );
+}
+
