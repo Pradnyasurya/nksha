@@ -5,6 +5,7 @@ import { cn } from "@/lib/cn";
 
 const NAV_ITEMS = [
   { to: "/", label: "Map", end: true },
+  { to: "/import", label: "Import" },
   { to: "/trips", label: "Trips" },
   { to: "/dashboard", label: "Dashboard" },
   { to: "/settings", label: "Settings" },
