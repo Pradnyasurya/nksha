@@ -1,6 +1,6 @@
 import { useState } from "react";
 import type { Place, Visit } from "@/db/schema";
-import { renamePlace } from "@/db/repo";
+import { renamePlace, setHomePlace } from "@/db/repo";
 import { yearColor } from "@/features/map/visitsLayer";
 
 interface VisitDetailCardProps {
@@ -36,7 +36,14 @@ export function VisitDetailCard({
   return (
     <aside className="absolute left-4 top-4 z-10 w-72 rounded-lg border border-border bg-card p-4 shadow-lg">
       <div className="flex items-start justify-between gap-2">
-        <h2 className="text-sm font-semibold leading-snug">{place.name}</h2>
+        <h2 className="text-sm font-semibold leading-snug">
+          {place.name}
+          {place.isHome === 1 && (
+            <span className="ml-1.5 align-middle text-[10px] font-normal text-primary">
+              ★ Home
+            </span>
+          )}
+        </h2>
         <span
           aria-hidden
           title={`Visited in ${new Date(visit.startTimeMs).getFullYear()}`}
@@ -95,7 +102,7 @@ export function VisitDetailCard({
           </button>
         </form>
       ) : (
-        <div className="mt-3 flex items-center gap-2">
+        <div className="mt-3 flex flex-wrap items-center gap-2">
           <button
             type="button"
             className="rounded-md border border-border px-2 py-1 text-xs hover:bg-muted"
@@ -106,9 +113,15 @@ export function VisitDetailCard({
           >
             Rename place
           </button>
-          <span className="text-[10px] text-muted-foreground">
-            applies everywhere
-          </span>
+          {place.isHome === 0 && (
+            <button
+              type="button"
+              className="rounded-md border border-border px-2 py-1 text-xs hover:bg-muted"
+              onClick={() => void setHomePlace(place.id)}
+            >
+              Set as home
+            </button>
+          )}
         </div>
       )}
 

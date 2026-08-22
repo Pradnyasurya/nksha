@@ -6,11 +6,11 @@ import {
   NavigationControl,
 } from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { Link, useSearchParams } from "react-router-dom";
 import { getDb } from "@/db/db";
 import type { BasemapStyle, Place, Visit } from "@/db/schema";
 import { getBasemapStyle, getCustomStyleUrl } from "@/db/repo";
-import { Link } from "react-router-dom";
 import { VisitDetailCard } from "@/features/map/VisitDetailCard";
 import {
   buildCartoStyle,
@@ -26,6 +26,7 @@ import {
   visitsToGeoJson,
   yearColorMatch,
 } from "@/features/map/visitsLayer";
+import { visitsInMonth } from "@/features/dashboard/stats";
 
 const VISITS_SOURCE = "visits";
 const CLUSTER_LAYER = "visit-clusters";
@@ -46,6 +47,17 @@ export default function MapView() {
   const customUrl = useLiveQuery(() => getCustomStyleUrl(), [], "");
   const places = useLiveQuery(() => getDb().places.toArray(), [], [] as Place[]);
   const visits = useLiveQuery(() => getDb().visits.toArray(), [], [] as Visit[]);
+  const [searchParams, setSearchParams] = useSearchParams();
+  const monthFocus = searchParams.get("month");
+  const [mountedAtMs] = useState(() => Date.now());
+
+  const focusedVisits = useMemo(
+    () =>
+      monthFocus
+        ? visitsInMonth(visits, monthFocus, { clampEndMs: mountedAtMs })
+        : visits,
+    [visits, monthFocus, mountedAtMs],
+  );
 
   useEffect(() => {
     if (!containerRef.current || mapRef.current) return;
@@ -155,9 +167,9 @@ export default function MapView() {
 
     ensureVisitsLayers(map);
     const source = map.getSource(VISITS_SOURCE) as GeoJSONSource;
-    source.setData(visitsToGeoJson(visits, placeIndex(places)));
+    source.setData(visitsToGeoJson(focusedVisits, placeIndex(places)));
 
-    const match = yearColorMatch(visits);
+    const match = yearColorMatch(focusedVisits);
     const circleColor = [
       "match",
       ["get", "year"],
@@ -165,7 +177,7 @@ export default function MapView() {
       "#888888",
     ] as unknown as ExpressionSpecification;
     map.setPaintProperty(POINT_LAYER, "circle-color", circleColor);
-  }, [places, visits, styleVersion]);
+  }, [places, focusedVisits, styleVersion]);
 
   const selectedPlace =
     selectedVisitId !== null
@@ -197,6 +209,22 @@ export default function MapView() {
               Import now
             </Link>
           </p>
+        </div>
+      )}
+
+      {monthFocus && (
+        <div className="absolute left-1/2 top-4 z-10 flex -translate-x-1/2 items-center gap-2 rounded-md bg-card px-3 py-1.5 text-xs shadow">
+          <span>
+            Showing <strong>{monthFocus}</strong> · {focusedVisits.length}{" "}
+            {focusedVisits.length === 1 ? "visit" : "visits"}
+          </span>
+          <button
+            type="button"
+            className="rounded border border-border px-1.5 py-0.5 hover:bg-muted"
+            onClick={() => setSearchParams({})}
+          >
+            Clear
+          </button>
         </div>
       )}
 
