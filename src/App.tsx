@@ -4,6 +4,7 @@ import MapView from "@/routes/MapView";
 import ImportView from "@/routes/ImportView";
 import TripsView from "@/routes/TripsView";
 import PlaybackView from "@/routes/PlaybackView";
+import HeatmapView from "@/routes/HeatmapView";
 import DashboardView from "@/routes/DashboardView";
 import SettingsView from "@/routes/SettingsView";
 
@@ -15,6 +16,7 @@ export default function App() {
         <Route path="import" element={<ImportView />} />
         <Route path="trips" element={<TripsView />} />
         <Route path="playback" element={<PlaybackView />} />
+        <Route path="heatmap" element={<HeatmapView />} />
         <Route path="dashboard" element={<DashboardView />} />
         <Route path="settings" element={<SettingsView />} />
       </Route>

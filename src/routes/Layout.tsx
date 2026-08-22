@@ -9,6 +9,7 @@ const NAV_ITEMS = [
   { to: "/trips", label: "Trips" },
   { to: "/playback", label: "Playback" },
   { to: "/dashboard", label: "Dashboard" },
+  { to: "/heatmap", label: "Heatmap" },
   { to: "/settings", label: "Settings" },
 ];
 
