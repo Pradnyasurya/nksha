@@ -1,4 +1,4 @@
-# Map Diary
+# nksha
 
 A personal web app that turns an imported Google Maps Timeline into a beautiful visual record of a person's travels — animated map playback, dashboards, and heatmaps. Users must import their own Google Timeline export; nothing is fetched from Google automatically.
 

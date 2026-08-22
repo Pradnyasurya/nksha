@@ -1,0 +1,11 @@
+# Allowlist for scripts/check-no-egress.sh
+#
+# The zero-egress invariant (docs/adr/0002) forbids absolute network endpoints in
+# shipped code. If — and only if — an ADR justifies a deliberate exception, add a
+# regex here matching the offending line. Entries are matched against
+# "<repo-relative-path>:<line>:<source text>" and must reference the justifying
+# ADR in a comment directly above them.
+#
+# One regex per line. Lines starting with # are ignored.
+# Example:
+#   ^src/tiles\.ts:[0-9]+:.*https://tiles\.example\.org/

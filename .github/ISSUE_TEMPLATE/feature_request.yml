@@ -1,0 +1,28 @@
+name: Feature request
+description: Propose a new capability or improvement.
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What are you trying to do, and what stands in the way? Describe the user-visible outcome, not the implementation.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: What would you like to happen?
+    validations:
+      required: true
+  - type: checkboxes
+    id: constraints
+    attributes:
+      label: Constraints acknowledgment
+      description: nksha has hard architectural constraints. Does your idea respect them?
+      options:
+        - label: This feature can be built with zero network egress (all processing stays client-side), per ADR-0002.
+          required: true
+        - label: It works without any account/server component, or explicitly argues for changing that.
+          required: true
