@@ -70,7 +70,7 @@ export default function SettingsView() {
 
   return (
     <div className="mx-auto max-w-2xl space-y-6 p-6">
-      <h1 className="text-xl font-semibold">Settings</h1>
+      <h1 className="font-display text-2xl font-semibold">Settings</h1>
 
       <section className="rounded-lg border border-border bg-card p-4">
         <label
@@ -85,7 +85,7 @@ export default function SettingsView() {
         </p>
         <select
           id="basemap-style"
-          className="mt-3 h-9 rounded-md border border-border bg-background px-3 text-sm"
+          className="mt-3 h-11 rounded-md border border-border bg-background px-3 text-sm"
           value={style}
           onChange={(e) =>
             void setBasemapStyle(e.target.value as BasemapStyle)
@@ -116,13 +116,13 @@ export default function SettingsView() {
             id="custom-style-url"
             type="text"
             placeholder="Paste a MapLibre style JSON URL"
-            className="h-9 flex-1 rounded-md border border-border bg-background px-3 text-sm"
+            className="h-11 flex-1 rounded-md border border-border bg-background px-3 text-sm"
             defaultValue={storedUrl}
             onBlur={commitUrl}
           />
           <button
             type="button"
-            className="h-9 rounded-md border border-border px-3 text-sm hover:bg-muted"
+            className="h-11 rounded-md border border-border px-3 text-sm hover:bg-muted"
             onClick={commitUrl}
           >
             Save
@@ -140,14 +140,14 @@ export default function SettingsView() {
         <div className="mt-3 flex flex-wrap gap-2">
           <button
             type="button"
-            className="flex h-9 items-center gap-2 rounded-md bg-primary px-3 text-sm text-primary-foreground hover:opacity-90"
+            className="flex min-h-11 items-center gap-2 rounded-md bg-primary px-3 py-2 text-sm text-primary-foreground hover:opacity-90"
             onClick={() => void exportArchive()}
           >
             <Download size={15} aria-hidden /> Export my data
           </button>
           <button
             type="button"
-            className="flex h-9 items-center gap-2 rounded-md border border-border px-3 text-sm hover:bg-muted"
+            className="flex min-h-11 items-center gap-2 rounded-md border border-border px-3 py-2 text-sm hover:bg-muted"
             onClick={() => restoreInputRef.current?.click()}
           >
             <Upload size={15} aria-hidden /> Restore from Archive…

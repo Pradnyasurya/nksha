@@ -226,6 +226,51 @@ export function routeGeometry(timeline: PlaybackTimeline): RouteLine[] {
   return out;
 }
 
+/** Great-circle length of a waypoint chain, in metres. */
+function polylineLengthMeters(points: PlaybackPoint[]): number {
+  let total = 0;
+  for (let i = 1; i < points.length; i++) {
+    const a = points[i - 1];
+    const b = points[i];
+    const dLat = ((b.lat - a.lat) * Math.PI) / 180;
+    const dLng = ((b.lng - a.lng) * Math.PI) / 180;
+    const lat1 = (a.lat * Math.PI) / 180;
+    const lat2 = (b.lat * Math.PI) / 180;
+    const h =
+      Math.sin(dLat / 2) ** 2 +
+      Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLng / 2) ** 2;
+    total += 2 * 6_371_000 * Math.asin(Math.min(1, Math.sqrt(h)));
+  }
+  return total;
+}
+
+/**
+ * Distance covered by the drawn route by instant `t` — the trip odometer
+ * shown during playback (#playback-story). Pure and deterministic.
+ */
+export function travelledDistanceMeters(
+  timeline: PlaybackTimeline,
+  t: number,
+): number {
+  let total = 0;
+  for (const segment of timeline.segments) {
+    if (segment.kind !== "travel") continue;
+    if (segment.endMs <= t) {
+      total += polylineLengthMeters(segment.points);
+      continue;
+    }
+    if (segment.startMs < t) {
+      // Partly drawn: count completed waypoints plus the interpolated
+      // position at t so the odometer grows smoothly along the leg.
+      const passed = segment.points.filter((p) => p.atMs <= t);
+      const here = interpolate(segment.points, t);
+      const partial = [...passed, { ...here, atMs: t }];
+      if (partial.length >= 2) total += polylineLengthMeters(partial);
+    }
+  }
+  return total;
+}
+
 // ---------------------------------------------------------------------------
 
 function chronological(a: Visit, b: Visit): number {

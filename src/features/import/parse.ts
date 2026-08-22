@@ -36,6 +36,24 @@ export interface ParsedTimeline {
   visits: ParsedVisit[];
   movements: ParsedMovement[];
   skippedSegments: number;
+  /** Local counts per skip reason — shown on the import report (#error-taxonomy). */
+  skippedByReason: Partial<Record<SkipReason, number>>;
+}
+
+export type ParseErrorCode =
+  | "unsupported-format"
+  | "empty-export"
+  | "malformed-json";
+
+/** Carries a machine-readable code so the UI can explain each failure mode. */
+export class TimelineParseError extends Error {
+  readonly code: ParseErrorCode;
+
+  constructor(code: ParseErrorCode, message: string) {
+    super(message);
+    this.name = "TimelineParseError";
+    this.code = code;
+  }
 }
 
 type Json = Record<string, unknown>;
@@ -110,6 +128,19 @@ function syntheticPlaceId(lat: number, lng: number): string {
   return `coord:${lat.toFixed(6)},${lng.toFixed(6)}`;
 }
 
+export type SkipReason =
+  | "missing-timestamp"
+  | "missing-coordinates"
+  | "no-usable-activity"
+  | "unknown-activity-type"
+  | "missing-location";
+
+/** Count one skipped segment under its reason so the report can explain it. */
+function skipSegment(result: ParsedTimeline, reason: SkipReason): void {
+  result.skippedSegments++;
+  result.skippedByReason[reason] = (result.skippedByReason[reason] ?? 0) + 1;
+}
+
 function parseTimelinePath(value: unknown): TimelinePoint[] | undefined {
   if (!Array.isArray(value) || value.length === 0) return undefined;
   const points: TimelinePoint[] = [];
@@ -143,7 +174,7 @@ function collectSemanticFormat(root: Json, result: ParsedTimeline): void {
 
     const startMs = parseTimestamp(segment.startTime);
     if (startMs === null) {
-      result.skippedSegments++;
+      skipSegment(result, "missing-timestamp");
       continue;
     }
     const endMs = parseTimestamp(segment.endTime);
@@ -159,7 +190,7 @@ function collectSemanticFormat(root: Json, result: ParsedTimeline): void {
       placeId = syntheticPlaceId(coords.lat, coords.lng);
     }
     if (!coords) {
-      result.skippedSegments++;
+      skipSegment(result, "missing-coordinates");
       continue;
     }
 
@@ -196,12 +227,12 @@ function collectSemanticActivity(
 ): void {
   const activity = asObject(segment.activity);
   if (!activity) {
-    result.skippedSegments++;
+    skipSegment(result, "no-usable-activity");
     return;
   }
   const startMs = parseTimestamp(segment.startTime);
   if (startMs === null) {
-    result.skippedSegments++;
+    skipSegment(result, "missing-timestamp");
     return;
   }
   const endMs = parseTimestamp(segment.endTime);
@@ -212,7 +243,7 @@ function collectSemanticActivity(
       : asObject(activity.topCandidate)?.type;
   const mode = normalizeActivityType(rawType);
   if (!mode) {
-    result.skippedSegments++;
+    skipSegment(result, "unknown-activity-type");
     return;
   }
 
@@ -259,13 +290,13 @@ function collectLegacyFormat(root: Json, result: ParsedTimeline): void {
     const location = asObject(placeVisit.location);
     const duration = asObject(placeVisit.duration);
     if (!location || !duration) {
-      result.skippedSegments++;
+      skipSegment(result, "missing-location");
       continue;
     }
 
     const startMs = parseTimestamp(duration.startTimestampMs);
     if (startMs === null) {
-      result.skippedSegments++;
+      skipSegment(result, "missing-timestamp");
       continue;
     }
     const endMs = parseTimestamp(duration.endTimestampMs);
@@ -278,7 +309,7 @@ function collectLegacyFormat(root: Json, result: ParsedTimeline): void {
       placeId = syntheticPlaceId(lat, lng);
     }
     if (lat === null || lng === null) {
-      result.skippedSegments++;
+      skipSegment(result, "missing-coordinates");
       continue;
     }
 
@@ -316,13 +347,13 @@ function collectLegacyActivity(
 ): void {
   const startMs = parseTimestamp(asObject(segment.duration)?.startTimestampMs);
   if (startMs === null) {
-    result.skippedSegments++;
+    skipSegment(result, "missing-timestamp");
     return;
   }
   const endMs = parseTimestamp(asObject(segment.duration)?.endTimestampMs);
   const mode = normalizeActivityType(segment.activityType);
   if (!mode) {
-    result.skippedSegments++;
+    skipSegment(result, "unknown-activity-type");
     return;
   }
 
@@ -362,8 +393,18 @@ export function parseTimeline(input: unknown): ParsedTimeline {
     root !== null && Array.isArray(root.semanticSegments);
   const hasLegacy = root !== null && Array.isArray(root.timelineObjects);
   if (!root || (!hasSemantic && !hasLegacy)) {
-    throw new Error(
-      "This file does not look like a Google Maps Timeline export",
+    throw new TimelineParseError(
+      "unsupported-format",
+      "This file does not look like a Google Maps Timeline export. You need the Timeline JSON from Google Takeout (Maps → Timeline), not Location History.json or a Takeout index.",
+    );
+  }
+  const segmentsEmpty =
+    (hasSemantic && (root.semanticSegments as unknown[]).length === 0) ||
+    (hasLegacy && (root.timelineObjects as unknown[]).length === 0);
+  if (segmentsEmpty) {
+    throw new TimelineParseError(
+      "empty-export",
+      "This Timeline export contains no entries. Re-request the export from Google Takeout with more history included.",
     );
   }
 
@@ -372,6 +413,7 @@ export function parseTimeline(input: unknown): ParsedTimeline {
     visits: [],
     movements: [],
     skippedSegments: 0,
+    skippedByReason: {},
   };
   if (hasSemantic) collectSemanticFormat(root, result);
   if (hasLegacy) collectLegacyFormat(root, result);

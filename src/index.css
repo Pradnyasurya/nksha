@@ -2,38 +2,47 @@
 
 @custom-variant dark (&:where(.dark, .dark *));
 
+/* ---------------------------------------------------------------------------
+ * nksha "personal cartography" identity.
+ * Light: warm paper. Dark: deep atlas blue. No webfonts are loaded — nksha
+ * ships zero network calls besides map tiles (ADR-0002), so display type uses
+ * the local serif stack and UI text uses the system sans stack.
+ * ------------------------------------------------------------------------- */
+
 :root {
-  --background: oklch(0.98 0.005 90);
-  --foreground: oklch(0.2 0.02 260);
-  --card: oklch(1 0 0);
-  --card-foreground: oklch(0.2 0.02 260);
-  --muted: oklch(0.94 0.008 90);
-  --muted-foreground: oklch(0.5 0.02 260);
-  --primary: oklch(0.55 0.14 40);
+  --background: oklch(0.97 0.012 85);
+  --foreground: oklch(0.24 0.03 60);
+  --card: oklch(0.995 0.004 90);
+  --card-foreground: oklch(0.24 0.03 60);
+  --muted: oklch(0.93 0.014 85);
+  --muted-foreground: oklch(0.42 0.025 60);
+  --primary: oklch(0.5 0.14 40);
   --primary-foreground: oklch(0.99 0 0);
-  --secondary: oklch(0.93 0.01 90);
-  --secondary-foreground: oklch(0.25 0.02 260);
+  --secondary: oklch(0.92 0.02 85);
+  --secondary-foreground: oklch(0.28 0.03 60);
   --accent: oklch(0.9 0.05 80);
-  --destructive: oklch(0.55 0.2 27);
-  --border: oklch(0.88 0.01 90);
-  --ring: oklch(0.55 0.14 40);
+  --destructive: oklch(0.52 0.2 27);
+  --border: oklch(0.86 0.015 80);
+  --ring: oklch(0.5 0.14 40);
+  --font-display: Georgia, "Iowan Old Style", "Times New Roman", serif;
 }
 
 .dark {
-  --background: oklch(0.17 0.01 260);
-  --foreground: oklch(0.95 0.005 90);
-  --card: oklch(0.22 0.012 260);
-  --card-foreground: oklch(0.95 0.005 90);
-  --muted: oklch(0.26 0.012 260);
-  --muted-foreground: oklch(0.68 0.01 260);
-  --primary: oklch(0.72 0.13 50);
-  --primary-foreground: oklch(0.15 0.01 260);
-  --secondary: oklch(0.28 0.012 260);
-  --secondary-foreground: oklch(0.95 0.005 90);
-  --accent: oklch(0.35 0.04 70);
-  --destructive: oklch(0.62 0.19 25);
-  --border: oklch(0.3 0.012 260);
-  --ring: oklch(0.72 0.13 50);
+  /* Deep atlas blue, not gray. */
+  --background: oklch(0.19 0.03 255);
+  --foreground: oklch(0.95 0.01 90);
+  --card: oklch(0.23 0.035 255);
+  --card-foreground: oklch(0.95 0.01 90);
+  --muted: oklch(0.28 0.035 255);
+  --muted-foreground: oklch(0.75 0.02 90);
+  --primary: oklch(0.78 0.12 65);
+  --primary-foreground: oklch(0.17 0.03 255);
+  --secondary: oklch(0.3 0.04 255);
+  --secondary-foreground: oklch(0.95 0.01 90);
+  --accent: oklch(0.38 0.06 70);
+  --destructive: oklch(0.66 0.19 25);
+  --border: oklch(0.34 0.035 255);
+  --ring: oklch(0.78 0.12 65);
   /* Re-apply the base palette here: body's text-foreground/bg-background
      resolve above this element and would otherwise stay stuck at the light
      values for anything inheriting from body. */
@@ -56,8 +65,60 @@
   --color-destructive: var(--destructive);
   --color-border: var(--border);
   --color-ring: var(--ring);
+  --font-display: var(--font-display);
 }
 
 body {
   @apply bg-background text-foreground;
+  /* Nothing may push the document wider than the viewport (#P0). */
+  overflow-x: clip;
+}
+
+#root {
+  min-width: 0;
+}
+
+h1,
+h2.font-display {
+  font-family: var(--font-display);
+  letter-spacing: -0.01em;
+}
+
+/* Visible focus everywhere, not just :focus-visible defaults. */
+:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+/* Subtle cartographic backdrop: faint contour rings + coordinate grid. */
+.paper-texture {
+  background-image:
+    radial-gradient(
+      ellipse 130% 90% at 50% -20%,
+      color-mix(in oklab, var(--accent) 26%, transparent),
+      transparent 60%
+    ),
+    repeating-radial-gradient(
+      circle at 110% 110%,
+      transparent 0 46px,
+      color-mix(in oklab, var(--border) 55%, transparent) 46px 47px
+    ),
+    repeating-linear-gradient(
+      to right,
+      transparent 0 95px,
+      color-mix(in oklab, var(--border) 35%, transparent) 95px 96px
+    );
+}
+
+/* Restrained motion; honour user preference. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }

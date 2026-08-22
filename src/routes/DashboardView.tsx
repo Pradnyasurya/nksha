@@ -26,6 +26,8 @@ import {
   farthestPlaceFromHome,
   monthStripDensity,
   topPlacesByDwell,
+  type DwellRanking,
+  type ModeDistance,
 } from "@/features/dashboard/stats";
 import { MODE_LABELS } from "@/features/movement/modes";
 import { cn } from "@/lib/cn";
@@ -58,6 +60,66 @@ function isValidIsoA3(value: string): boolean {
   return /^[A-Za-z]{3}$/.test(value.trim());
 }
 
+/**
+ * Lead with sentences, not a wall of metrics (#dashboard-narrative).
+ * Every line is derived from the user's own imported data.
+ */
+function buildNarrative(input: {
+  daysAway: number | null;
+  homeName?: string;
+  top: DwellRanking[];
+  modeDistances: ModeDistance[];
+  countryCount: number;
+}): string[] {
+  const lines: string[] = [];
+  if (input.daysAway !== null) {
+    lines.push(
+      `You spent ${input.daysAway} ${input.daysAway === 1 ? "day" : "days"} away from ${
+        input.homeName ?? "home"
+      }.`,
+    );
+  }
+  const best = input.top[0];
+  if (best) {
+    lines.push(
+      `${best.place.name || "Your most-visited place"} held you longest — ${formatDuration(
+        best.totalDwellMs,
+      )} across ${best.visitCount} ${best.visitCount === 1 ? "visit" : "visits"}.`,
+    );
+  }
+  const leadMode = input.modeDistances[0];
+  if (leadMode && leadMode.distanceMeters > 0) {
+    lines.push(
+      `You covered the most ground by ${MODE_LABELS[leadMode.mode].toLowerCase()} — ${formatDistance(
+        leadMode.distanceMeters,
+      ).replace(" km", " kilometres")}.`,
+    );
+  }
+  if (input.countryCount > 0) {
+    lines.push(
+      `Your map touches ${input.countryCount} ${
+        input.countryCount === 1 ? "country" : "countries"
+      }.`,
+    );
+  }
+  return lines;
+}
+
+/** Clearly-marked synthetic numbers so the empty dashboard still sells. */
+function SampleCard({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-lg border border-dashed border-border bg-card p-4">
+      <p className="text-xs text-muted-foreground">{label}</p>
+      <p
+        aria-hidden
+        className="mt-2 select-none text-3xl font-semibold tabular-nums opacity-60 blur-[2px]"
+      >
+        {value}
+      </p>
+    </div>
+  );
+}
+
 export default function DashboardView() {
   const navigate = useNavigate();
   const places = useLiveQuery(() => getDb().places.toArray(), [], []);
@@ -87,17 +149,31 @@ export default function DashboardView() {
 
   if (visits.length === 0) {
     return (
-      <div className="flex h-full items-center justify-center p-6 text-center">
-        <div>
-          <p className="text-sm font-medium">Nothing to show yet</p>
-          <p className="mt-1 max-w-sm text-sm text-muted-foreground">
-            Your dashboard fills up once you import a Google Timeline export.
+      <div className="paper-texture h-full min-w-0 overflow-y-auto">
+        <div className="mx-auto max-w-xl p-6 text-center">
+          <h1 className="font-display text-2xl font-semibold">Insights</h1>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Once your timeline is in, this page answers questions like these —
+            previewed below with sample numbers.
           </p>
+
+          <div className="mt-6 grid grid-cols-2 gap-3 text-left sm:grid-cols-3">
+            <SampleCard label="Days away from home" value="43" />
+            <SampleCard label="Top place dwell" value="212 h" />
+            <SampleCard label="Kilometres driven" value="8,940" />
+            <SampleCard label="Countries touched" value="11" />
+            <SampleCard label="Trips inferred" value="19" />
+            <SampleCard label="Years mapped" value="8" />
+          </div>
+          <p className="mt-3 text-xs uppercase tracking-wide text-muted-foreground">
+            Sample values — your real numbers appear after import
+          </p>
+
           <Link
             to="/import"
-            className="mt-3 inline-block rounded-md bg-primary px-3 py-1.5 text-sm text-primary-foreground hover:opacity-90"
+            className="mt-6 inline-flex min-h-12 items-center gap-2 rounded-lg bg-primary px-6 text-base font-medium text-primary-foreground hover:opacity-90"
           >
-            Import now
+            Import your timeline
           </Link>
         </div>
       </div>
@@ -111,10 +187,37 @@ export default function DashboardView() {
     selectedYear ?? new Date().getFullYear(),
   );
   const maxDensity = Math.max(1, ...density);
+  const narrative = buildNarrative({
+    daysAway,
+    homeName: home?.name,
+    top,
+    modeDistances,
+    countryCount: countryCodes.length,
+  });
 
   return (
-    <div className="mx-auto max-w-4xl space-y-4 overflow-y-auto p-6">
-      <h1 className="text-xl font-semibold">Dashboard</h1>
+    <div className="mx-auto min-w-0 max-w-4xl space-y-4 overflow-y-auto p-4 sm:p-6">
+      <h1 className="font-display text-2xl font-semibold">Insights</h1>
+
+      {narrative.length > 0 && (
+        <section
+          aria-label="Your year in brief"
+          className="rounded-lg border border-primary/30 bg-accent/60 p-4"
+        >
+          {narrative.map((line, index) => (
+            <p
+              key={index}
+              className={
+                index === 0
+                  ? "font-display text-lg font-semibold leading-snug"
+                  : "mt-1.5 text-sm text-muted-foreground"
+              }
+            >
+              {line}
+            </p>
+          ))}
+        </section>
+      )}
 
       {!home && (
         <section className="rounded-lg border border-border bg-card p-4">
@@ -211,7 +314,7 @@ export default function DashboardView() {
           {years.length > 1 && (
             <select
               aria-label="Year"
-              className="h-8 rounded-md border border-border bg-background px-2 text-xs"
+              className="h-11 rounded-md border border-border bg-background px-2 text-xs"
               value={selectedYear}
               onChange={(e) => setYear(Number(e.target.value))}
             >
@@ -348,11 +451,11 @@ function CountriesCard({
           placeholder="Add a country (ISO code)"
           aria-label="Add a country manually"
           maxLength={3}
-          className="h-8 w-56 rounded-md border border-border bg-background px-2 text-sm"
+          className="h-11 w-40 rounded-md border border-border bg-background px-2 text-sm sm:w-56"
         />
         <button
           type="submit"
-          className="flex h-8 items-center gap-1 rounded-md border border-border px-2.5 text-xs hover:bg-muted"
+          className="flex h-11 items-center gap-1 rounded-md border border-border px-2.5 text-xs hover:bg-muted"
         >
           <Plus size={13} aria-hidden /> Add manually
         </button>

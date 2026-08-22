@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { parseTimeline } from "@/features/import/parse";
+import {
+  TimelineParseError,
+  parseTimeline,
+} from "@/features/import/parse";
 
 const NEW_FORMAT = {
   semanticSegments: [
@@ -346,5 +349,66 @@ describe("parseTimeline (iOS app export format)", () => {
 
   it("still rejects an empty array as unrecognisable", () => {
     expect(() => parseTimeline([])).toThrow(/Timeline export/i);
+  });
+});
+
+describe("parseTimeline error taxonomy", () => {
+  it("tags unsupported files with a machine-readable code", () => {
+    try {
+      parseTimeline({ nope: true });
+      expect.unreachable();
+    } catch (err) {
+      expect(err).toBeInstanceOf(TimelineParseError);
+      expect((err as TimelineParseError).code).toBe("unsupported-format");
+    }
+  });
+
+  it("distinguishes a structurally valid but empty export", () => {
+    try {
+      parseTimeline({ semanticSegments: [] });
+      expect.unreachable();
+    } catch (err) {
+      expect((err as TimelineParseError).code).toBe("empty-export");
+    }
+    try {
+      parseTimeline({ timelineObjects: [] });
+      expect.unreachable();
+    } catch (err) {
+      expect((err as TimelineParseError).code).toBe("empty-export");
+    }
+  });
+
+  it("counts skipped segments per reason for the report screen", () => {
+    const messy = {
+      semanticSegments: [
+        // visit with no readable time
+        {
+          startTime: "not-a-date",
+          visit: {
+            topCandidate: {
+              placeId: "A",
+              placeLocation: { latLng: "10.0°, 20.0°" },
+            },
+          },
+        },
+        // visit with no coordinates
+        { startTime: "2026-05-01T08:00:00Z", visit: { topCandidate: {} } },
+        // usable visit
+        {
+          startTime: "2026-05-02T08:00:00Z",
+          visit: {
+            topCandidate: {
+              placeId: "B",
+              placeLocation: { latLng: "11.0°, 21.0°" },
+            },
+          },
+        },
+      ],
+    };
+    const parsed = parseTimeline(messy);
+    expect(parsed.visits).toHaveLength(1);
+    expect(parsed.skippedSegments).toBe(2);
+    expect(parsed.skippedByReason["missing-timestamp"]).toBe(1);
+    expect(parsed.skippedByReason["missing-coordinates"]).toBe(1);
   });
 });
