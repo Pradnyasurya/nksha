@@ -1,10 +1,5 @@
 import { useLiveQuery } from "dexie-react-hooks";
-import {
-  type ExpressionSpecification,
-  type GeoJSONSource,
-  Map as MaplibreMap,
-  NavigationControl,
-} from "maplibre-gl";
+import { Map as MaplibreMap, NavigationControl } from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
@@ -15,19 +10,29 @@ import {
   buildPlaybackTimeline,
   defaultPlaybackRange,
   renderAt,
-  routeGeometry,
 } from "@/features/playback/engine";
+import {
+  applyDot,
+  applyPinVisibility,
+  ensurePlaybackLayers,
+  setPinData,
+  setRouteData,
+  waitForRender,
+} from "@/features/playback/mapLayers";
 import { buildCartoStyle } from "@/features/map/mapStyles";
 import { dayKeyToDate } from "@/lib/days";
-
-const ROUTE_SOURCE = "playback-route";
-const PINS_SOURCE = "playback-pins";
-const DOT_SOURCE = "playback-dot";
-const ROUTE_LAYER = "playback-route-line";
-const PINS_LAYER = "playback-pins-layer";
-const DOT_LAYER = "playback-dot-layer";
-
-const EMPTY_FC = { type: "FeatureCollection" as const, features: [] };
+import {
+  EXPORT_HEIGHT,
+  EXPORT_WIDTH,
+  exceedsSuggestedDuration,
+  frameTimeMs,
+  planExport,
+  type ExportPlan,
+} from "@/features/export/framePlanner";
+import {
+  encodePlaybackVideo,
+  ExportCancelledError,
+} from "@/features/export/videoExport";
 
 const SPEEDS = [
   { multiplier: 60, label: "1 min/s" },
@@ -41,6 +46,12 @@ const READOUT_FORMAT = new Intl.DateTimeFormat(undefined, {
   dateStyle: "medium",
   timeStyle: "short",
 });
+
+type ExportState =
+  | { phase: "idle" }
+  | { phase: "confirming"; plan: ExportPlan }
+  | { phase: "running"; done: number; total: number }
+  | { phase: "error"; message: string };
 
 export default function PlaybackView() {
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -104,6 +115,8 @@ export default function PlaybackView() {
   const followRef = useRef(true);
   const tRef = useRef<number | null>(null);
   const playingRef = useRef(false);
+  const [exportState, setExportState] = useState<ExportState>({ phase: "idle" });
+  const exportCancelRef = useRef(false);
 
   useEffect(() => {
     tRef.current = t;
@@ -142,76 +155,24 @@ export default function PlaybackView() {
     const map = mapRef.current;
     if (!map || !mapReady || !timeline) return;
 
-    if (!map.getSource(ROUTE_SOURCE)) {
-      map.addSource(ROUTE_SOURCE, { type: "geojson", data: EMPTY_FC });
-      map.addLayer({
-        id: ROUTE_LAYER,
-        type: "line",
-        source: ROUTE_SOURCE,
-        layout: { "line-join": "round", "line-cap": "round" },
-        paint: {
-          "line-color": "#e0b64c",
-          "line-width": 2.5,
-          "line-opacity": 0.55,
-        },
-      });
-      map.addSource(PINS_SOURCE, { type: "geojson", data: EMPTY_FC });
-      map.addLayer({
-        id: PINS_LAYER,
-        type: "circle",
-        source: PINS_SOURCE,
-        paint: {
-          "circle-color": "#7aa5d8",
-          "circle-radius": 5,
-          "circle-stroke-width": 1.2,
-          "circle-stroke-color": "#ffffffcc",
-        },
-      });
-      map.addSource(DOT_SOURCE, { type: "geojson", data: EMPTY_FC });
-      map.addLayer({
-        id: DOT_LAYER,
-        type: "circle",
-        source: DOT_SOURCE,
-        paint: {
-          "circle-color": "#ff5c38",
-          "circle-radius": 7,
-          "circle-stroke-width": 2,
-          "circle-stroke-color": "#ffffff",
-        },
-      });
+    ensurePlaybackLayers(map);
+    setRouteData(map, timeline);
+    setPinData(map, timeline, visits, places);
+
+    let minLng = Infinity, maxLng = -Infinity, minLat = Infinity, maxLat = -Infinity;
+    for (const segment of timeline.segments) {
+      if (segment.kind !== "travel") continue;
+      for (const p of segment.points) {
+        minLng = Math.min(minLng, p.lng); maxLng = Math.max(maxLng, p.lng);
+        minLat = Math.min(minLat, p.lat); maxLat = Math.max(maxLat, p.lat);
+      }
     }
-
-    (map.getSource(ROUTE_SOURCE) as GeoJSONSource).setData({
-      type: "FeatureCollection" as const,
-      features: routeGeometry(timeline).map((line) => ({
-        type: "Feature" as const,
-        properties: {},
-        geometry: { type: "LineString" as const, coordinates: line.coordinates },
-      })),
-    });
-
-    const placesById = new Map(places.map((p) => [p.id, p]));
-    (map.getSource(PINS_SOURCE) as GeoJSONSource).setData({
-      type: "FeatureCollection" as const,
-      features: timeline.arrivals.map(({ visitId, atMs }) => {
-        const visit = visits.find((v) => v.id === visitId)!;
-        const place = placesById.get(visit.placeId)!;
-        return {
-          type: "Feature" as const,
-          properties: {
-            visitId,
-            arrivalMs: atMs,
-            name: place.name || place.id,
-          },
-          geometry: {
-            type: "Point" as const,
-            coordinates: [place.lng, place.lat],
-          },
-        };
-      }),
-    });
-
-    fitToRoute(map);
+    if (minLng !== Infinity) {
+      map.fitBounds(
+        [[minLng, minLat], [maxLng, maxLat]],
+        { padding: 60, duration: 0, maxZoom: 12 },
+      );
+    }
   }, [timeline, mapReady, places, visits]);
 
   // Per-frame render(t): dot position, popped-pin filter, camera follow.
@@ -219,32 +180,9 @@ export default function PlaybackView() {
     const map = mapRef.current;
     if (!map || !mapReady || !timeline || t === null) return;
 
-    const filter = [
-      "<=",
-      ["get", "arrivalMs"],
-      t,
-    ] as unknown as ExpressionSpecification;
-    if (map.getLayer(PINS_LAYER)) map.setFilter(PINS_LAYER, filter);
-
+    applyPinVisibility(map, t);
     const frame = renderAt(timeline, t);
-    const dotData = frame.dot
-      ? {
-          type: "FeatureCollection" as const,
-          features: [
-            {
-              type: "Feature" as const,
-              properties: {},
-              geometry: {
-                type: "Point" as const,
-                coordinates: [frame.dot.lng, frame.dot.lat],
-              },
-            },
-          ],
-        }
-      : EMPTY_FC;
-    if (map.getSource(DOT_SOURCE)) {
-      (map.getSource(DOT_SOURCE) as GeoJSONSource).setData(dotData);
-    }
+    applyDot(map, frame.dot);
 
     if (playingRef.current && followRef.current && frame.dot) {
       map.jumpTo({ center: [frame.dot.lng, frame.dot.lat] });
@@ -275,6 +213,123 @@ export default function PlaybackView() {
     return () => cancelAnimationFrame(raf);
   }, [playing, timeline]);
 
+  async function startExport(plan: ExportPlan): Promise<void> {
+    if (!timeline || !range) return;
+    exportCancelRef.current = false;
+    setPlaying(false);
+    setExportState({ phase: "running", done: 0, total: plan.frameCount });
+
+    const snapshotTimeline = timeline;
+    const snapshotVisits = visits;
+    const snapshotPlaces = places;
+
+    const host = document.createElement("div");
+    Object.assign(host.style, {
+      position: "fixed",
+      left: "-99999px",
+      top: "0",
+      width: `${EXPORT_WIDTH}px`,
+      height: `${EXPORT_HEIGHT}px`,
+    });
+    document.body.appendChild(host);
+
+    let captureMap: MaplibreMap | null = null;
+    try {
+      captureMap = new MaplibreMap({
+        container: host,
+        style: buildCartoStyle(preference === "light" ? "light" : "dark"),
+        interactive: false,
+        attributionControl: false,
+        fadeDuration: 0,
+      });
+      await new Promise<void>((resolve, reject) => {
+        const timeout = setTimeout(
+          () => reject(new Error("Basemap failed to load in time")),
+          15_000,
+        );
+        captureMap!.once("load", () => {
+          clearTimeout(timeout);
+          resolve();
+        });
+      });
+
+      ensurePlaybackLayers(captureMap);
+      setRouteData(captureMap, snapshotTimeline);
+      setPinData(captureMap, snapshotTimeline, snapshotVisits, snapshotPlaces);
+
+      let minLng = Infinity, maxLng = -Infinity, minLat = Infinity, maxLat = -Infinity;
+      for (const segment of snapshotTimeline.segments) {
+        if (segment.kind !== "travel") continue;
+        for (const p of segment.points) {
+          minLng = Math.min(minLng, p.lng); maxLng = Math.max(maxLng, p.lng);
+          minLat = Math.min(minLat, p.lat); maxLat = Math.max(maxLat, p.lat);
+        }
+      }
+      let routeZoom = captureMap.getZoom();
+      if (minLng !== Infinity) {
+        captureMap.fitBounds(
+          [[minLng, minLat], [maxLng, maxLat]],
+          { padding: 80, duration: 0, maxZoom: 12 },
+        );
+        routeZoom = captureMap.getZoom();
+        await waitForRender(captureMap);
+      }
+
+      const canvas = document.createElement("canvas");
+      canvas.width = EXPORT_WIDTH;
+      canvas.height = EXPORT_HEIGHT;
+      const ctx2d = canvas.getContext("2d");
+
+      const result = await encodePlaybackVideo({
+        plan,
+        fallbackCanvas: canvas,
+        drawFrame: async (index) => {
+          const frameT = frameTimeMs(plan, range.startMs, index);
+          const frame = renderAt(snapshotTimeline, frameT);
+          applyPinVisibility(captureMap!, frameT);
+          applyDot(captureMap!, frame.dot);
+          if (frame.dot) {
+            captureMap!.jumpTo({
+              center: [frame.dot.lng, frame.dot.lat],
+              zoom: routeZoom,
+            });
+          }
+          await waitForRender(captureMap!);
+          ctx2d?.drawImage(captureMap!.getCanvas(), 0, 0, EXPORT_WIDTH, EXPORT_HEIGHT);
+          return canvas;
+        },
+        onProgress: (done, total) =>
+          setExportState({ phase: "running", done, total }),
+        shouldCancel: () => exportCancelRef.current,
+      });
+
+      downloadBlob(result.blob, playbackFileName(range, result.extension));
+      setExportState({ phase: "idle" });
+    } catch (error) {
+      if (error instanceof ExportCancelledError) {
+        setExportState({ phase: "idle" });
+      } else {
+        setExportState({
+          phase: "error",
+          message: error instanceof Error ? error.message : String(error),
+        });
+      }
+    } finally {
+      captureMap?.remove();
+      host.remove();
+    }
+  }
+
+  function beginExportRequest(): void {
+    if (!range) return;
+    const plan = planExport(range.startMs, range.endMs, speedMultiplier);
+    if (exceedsSuggestedDuration(plan)) {
+      setExportState({ phase: "confirming", plan });
+    } else {
+      void startExport(plan);
+    }
+  }
+
   if (visits.length === 0 || !range) {
     return (
       <div className="flex h-full items-center justify-center p-6 text-center">
@@ -303,6 +358,7 @@ export default function PlaybackView() {
           Math.max(0, (t - timeline.rangeStartMs) / (timeline.rangeEndMs - timeline.rangeStartMs)),
         )
       : 0;
+  const exporting = exportState.phase === "running";
 
   function scrub(fraction: number): void {
     if (!timeline) return;
@@ -336,6 +392,7 @@ export default function PlaybackView() {
             min={0}
             max={1000}
             value={Math.round(scrubFraction * 1000)}
+            disabled={exporting}
             onChange={(event) =>
               scrub(Number(event.target.value) / 1000)
             }
@@ -345,6 +402,7 @@ export default function PlaybackView() {
             <button
               type="button"
               className="rounded-md bg-primary px-3 py-1.5 font-medium text-primary-foreground hover:opacity-90"
+              disabled={exporting}
               onClick={() => setPlaying((was) => !was)}
             >
               {playing ? "Pause" : "Play"}
@@ -352,6 +410,7 @@ export default function PlaybackView() {
             <select
               aria-label="Playback speed"
               value={speedMultiplier}
+              disabled={exporting}
               onChange={(event) => setSpeedMultiplier(Number(event.target.value))}
               className="h-8 rounded-md border border-border bg-background px-1.5"
             >
@@ -395,7 +454,79 @@ export default function PlaybackView() {
                 className="h-8 rounded-md border border-border bg-background px-1.5"
               />
             </label>
+            <button
+              type="button"
+              className="rounded-md border border-border px-3 py-1.5 font-medium hover:bg-muted disabled:pointer-events-none disabled:opacity-50"
+              disabled={exporting}
+              onClick={beginExportRequest}
+            >
+              Export MP4
+            </button>
           </div>
+
+          {exportState.phase === "confirming" && (
+            <div className="rounded-md border border-border bg-background p-3 text-xs" role="alertdialog" aria-label="Long export warning">
+              <p>
+                At this speed the selected range produces a ~
+                {Math.round(exportState.plan.durationSec / 60)} minute video (
+                {exportState.plan.frameCount} frames). Continue?
+              </p>
+              <div className="mt-2 flex gap-2">
+                <button
+                  type="button"
+                  className="rounded-md bg-primary px-3 py-1.5 font-medium text-primary-foreground hover:opacity-90"
+                  onClick={() => void startExport(exportState.plan)}
+                >
+                  Export anyway
+                </button>
+                <button
+                  type="button"
+                  className="rounded-md border border-border px-3 py-1.5"
+                  onClick={() => setExportState({ phase: "idle" })}
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          )}
+
+          {exportState.phase === "running" && (
+            <div className="rounded-md border border-border bg-background p-3 text-xs">
+              <div className="flex items-center justify-between gap-3">
+                <span role="status">
+                  Rendering frame {exportState.done}/{exportState.total}…
+                </span>
+                <button
+                  type="button"
+                  className="rounded-md bg-destructive px-2 py-1 text-white"
+                  onClick={() => {
+                    exportCancelRef.current = true;
+                  }}
+                >
+                  Cancel export
+                </button>
+              </div>
+              <progress
+                className="mt-2 w-full"
+                value={exportState.done}
+                max={exportState.total}
+              />
+            </div>
+          )}
+
+          {exportState.phase === "error" && (
+            <div className="rounded-md border border-destructive bg-background p-3 text-xs" role="alert">
+              <span>{exportState.message}</span>{" "}
+              <button
+                type="button"
+                className="ml-2 rounded-md border border-border px-2 py-1"
+                onClick={() => setExportState({ phase: "idle" })}
+              >
+                Dismiss
+              </button>
+            </div>
+          )}
+
           <p className="text-[10px] text-muted-foreground">
             A reconstruction drawn from your visits and breadcrumbs — not a
             replay of recorded movement.
@@ -423,25 +554,23 @@ function placeName(places: Place[], placeId: string | null): string {
   return places.find((p) => p.id === placeId)?.name || "unnamed place";
 }
 
-function fitToRoute(map: MaplibreMap): void {
-  const source = map.getSource(ROUTE_SOURCE) as GeoJSONSource | undefined;
-  if (!source) return;
-  void source.getData().then((data) => {
-    let minLng = Infinity, maxLng = -Infinity, minLat = Infinity, maxLat = -Infinity;
-    for (const feature of data.features) {
-      const coords =
-        feature.geometry.type === "LineString"
-          ? feature.geometry.coordinates
-          : [feature.geometry.coordinates];
-      for (const [lng, lat] of coords) {
-        minLng = Math.min(minLng, lng); maxLng = Math.max(maxLng, lng);
-        minLat = Math.min(minLat, lat); maxLat = Math.max(maxLat, lat);
-      }
-    }
-    if (minLng === Infinity) return;
-    map.fitBounds(
-      [[minLng, minLat], [maxLng, maxLat]],
-      { padding: 60, duration: 0, maxZoom: 12 },
-    );
-  });
+function playbackFileName(
+  range: { startMs: number; endMs: number },
+  extension: string,
+): string {
+  return `nksha-playback-${toDayKeyInput(range.startMs)}_${toDayKeyInput(range.endMs)}.${extension}`;
+}
+
+function downloadBlob(blob: Blob, fileName: string): void {
+  const url = URL.createObjectURL(blob);
+  try {
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = fileName;
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+  } finally {
+    setTimeout(() => URL.revokeObjectURL(url), 10_000);
+  }
 }
