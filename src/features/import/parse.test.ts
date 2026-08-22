@@ -237,3 +237,114 @@ describe("parseTimeline movements (legacy activitySegment)", () => {
     expect(parseTimeline(LEGACY_ACTIVITY_FORMAT)).toEqual(result);
   });
 });
+
+const IOS_EXPORT = [
+  {
+    startTime: "2026-03-12T18:14:00.109+05:30",
+    endTime: "2026-03-13T06:06:39.035+05:30",
+    activity: {
+      probability: "0.965136",
+      end: "geo:-12.345600,56.789000",
+      topCandidate: {
+        type: "in passenger vehicle",
+        probability: "0.586533",
+      },
+      distanceMeters: "95870.460938",
+      start: "geo:-12.300000,56.700000",
+    },
+  },
+  {
+    startTime: "2026-03-13T06:06:39.035+05:30",
+    endTime: "2026-03-15T16:38:37.540+05:30",
+    visit: {
+      hierarchyLevel: "0",
+      topCandidate: {
+        probability: "0.343355",
+        semanticType: "Home",
+        placeID: "ChIJioshome",
+        placeLocation: "geo:-13.100000,57.200000",
+      },
+      probability: "0.745908",
+    },
+    timelinePath: [
+      { point: "geo:-13.099900,57.199800", durationMinutesOffsetFromStartTime: "8" },
+      { point: "geo:-13.101000,57.202000", durationMinutesOffsetFromStartTime: "21" },
+    ],
+  },
+  {
+    startTime: "2026-03-15T16:38:37.540+05:30",
+    visit: {
+      topCandidate: {
+        placeID: "ChIJioswork",
+        placeLocation: "geo:-13.500000,57.500000",
+      },
+    },
+  },
+  {
+    endTime: "2026-03-16T11:00:00.000Z",
+    startTime: "2026-03-16T09:00:00.000Z",
+    timelinePath: [
+      { point: "geo:-13.400000,57.400000", durationMinutesOffsetFromStartTime: "0" },
+    ],
+  },
+];
+
+describe("parseTimeline (iOS app export format)", () => {
+  const result = parseTimeline(IOS_EXPORT);
+
+  it("accepts the bare segment array as the root", () => {
+    expect(result.visits).toHaveLength(2);
+    expect(result.movements).toHaveLength(1);
+  });
+
+  it("reads geo: coordinates and placeID casing", () => {
+    expect(result.places[0]).toEqual({
+      id: "ChIJioshome",
+      name: "",
+      address: "",
+      lat: -13.1,
+      lng: 57.2,
+    });
+    const work = result.places.find((p) => p.id === "ChIJioswork")!;
+    expect(work).toMatchObject({ lat: -13.5, lng: 57.5 });
+  });
+
+  it("parses string-typed probabilities into numbers", () => {
+    const homeVisit = result.visits.find((v) =>
+      v.dedupeKey.startsWith("ChIJioshome:"),
+    )!;
+    expect(homeVisit.sourceProbability).toBeCloseTo(0.343355, 6);
+  });
+
+  it("attaches timelinePath breadcrumbs with iOS offset keys", () => {
+    const homeVisit = result.visits.find((v) =>
+      v.dedupeKey.startsWith("ChIJioshome:"),
+    )!;
+    expect(homeVisit.timelinePath![1]).toEqual({
+      lat: -13.101,
+      lng: 57.202,
+      offsetMinutes: 21,
+    });
+  });
+
+  it("maps iOS activity wording onto movement modes", () => {
+    expect(result.movements[0]).toMatchObject({
+      mode: "driving",
+      distanceMeters: 95870.460938,
+      startLat: -12.3,
+      endLng: 56.789,
+    });
+  });
+
+  it("skips breadcrumb-only segments without failing", () => {
+    expect(result.skippedSegments).toBe(1);
+  });
+
+  it("is deterministic for identical input", () => {
+    expect(parseTimeline(IOS_EXPORT)).toEqual(result);
+  });
+
+  it("still rejects an empty array as unrecognisable", () => {
+    expect(() => parseTimeline([])).toThrow(/Timeline export/i);
+  });
+});

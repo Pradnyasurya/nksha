@@ -46,11 +46,14 @@ function asObject(value: unknown): Json | null {
     : null;
 }
 
-/** `"32.2396°, 77.1887°"` → `{lat, lng}`. */
+/**
+ * `"32.2396°, 77.1887°"` (Android) and `"geo:32.2396,77.1887"` (iOS) →
+ * `{lat, lng}`.
+ */
 function parseLatLngString(value: unknown): { lat: number; lng: number } | null {
   if (typeof value !== "string") return null;
   const match = value.match(
-    /(-?\d+(?:\.\d+)?)\s*°\s*,\s*(-?\d+(?:\.\d+)?)\s*°?/,
+    /^(?:geo:)?\s*(-?\d+(?:\.\d+)?)\s*°?\s*,\s*(-?\d+(?:\.\d+)?)\s*°?/,
   );
   if (!match) return null;
   const lat = Number(match[1]);
@@ -80,6 +83,29 @@ function e7ToDegrees(value: unknown): number | null {
     : null;
 }
 
+function parseNumberish(value: unknown): number | null {
+  if (typeof value === "number") {
+    return Number.isFinite(value) ? value : null;
+  }
+  if (typeof value === "string") {
+    const parsed = Number(value.trim());
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
+}
+
+function parseProbability(value: unknown): number | undefined {
+  const n = parseNumberish(value);
+  return n !== null && n >= 0 && n <= 1 ? n : undefined;
+}
+
+/** Coordinates given directly as a string or nested as `{latLng}`. */
+function extractCoords(value: unknown): { lat: number; lng: number } | null {
+  if (typeof value === "string") return parseLatLngString(value);
+  const obj = asObject(value);
+  return obj ? parseLatLngString(obj.latLng) : null;
+}
+
 function syntheticPlaceId(lat: number, lng: number): string {
   return `coord:${lat.toFixed(6)},${lng.toFixed(6)}`;
 }
@@ -91,8 +117,11 @@ function parseTimelinePath(value: unknown): TimelinePoint[] | undefined {
     const entry = asObject(raw);
     if (!entry) continue;
     const coords = parseLatLngString(entry.point);
-    const offset = entry.durationMinutesOffsetFromStart;
-    if (!coords || typeof offset !== "number") continue;
+    const offset = parseNumberish(
+      entry.durationMinutesOffsetFromStart ??
+        entry.durationMinutesOffsetFromStartTime,
+    );
+    if (!coords || offset === null) continue;
     points.push({ ...coords, offsetMinutes: offset });
   }
   return points.length > 0 ? points : undefined;
@@ -120,11 +149,12 @@ function collectSemanticFormat(root: Json, result: ParsedTimeline): void {
     const endMs = parseTimestamp(segment.endTime);
 
     let placeId =
-      typeof topCandidate.placeId === "string" ? topCandidate.placeId : null;
-    const coords =
-      parseLatLngString(
-        asObject(topCandidate.placeLocation)?.latLng,
-      ) ?? null;
+      typeof topCandidate.placeId === "string"
+        ? topCandidate.placeId
+        : typeof topCandidate.placeID === "string"
+          ? topCandidate.placeID
+          : null;
+    const coords = extractCoords(topCandidate.placeLocation) ?? null;
     if (!placeId && coords) {
       placeId = syntheticPlaceId(coords.lat, coords.lng);
     }
@@ -143,10 +173,7 @@ function collectSemanticFormat(root: Json, result: ParsedTimeline): void {
       });
     }
 
-    const probability =
-      typeof topCandidate.probability === "number"
-        ? topCandidate.probability
-        : undefined;
+    const probability = parseProbability(topCandidate.probability);
 
     result.visits.push({
       dedupeKey: `${placeId}:${startMs}`,
@@ -190,8 +217,8 @@ function collectSemanticActivity(
   }
 
   const distance = parseDistance(activity.distanceMeters);
-  const startCoords = parseLatLngString(asObject(activity.start)?.latLng);
-  const endCoords = parseLatLngString(asObject(activity.end)?.latLng);
+  const startCoords = extractCoords(activity.start);
+  const endCoords = extractCoords(activity.end);
 
   result.movements.push({
     dedupeKey: `act:${mode}:${startMs}`,
@@ -321,11 +348,16 @@ function collectLegacyActivity(
 
 /**
  * Parse a Google Maps Timeline export into Places and Visits.
- * Accepts the phone "semanticSegments" format and the legacy
- * "timelineObjects" format. Pure and deterministic; runs in a worker.
+ * Accepts three formats: the phone "semanticSegments" object, the iOS app's
+ * bare segment array, and the legacy "timelineObjects" format. Pure and
+ * deterministic; runs in a worker.
  */
 export function parseTimeline(input: unknown): ParsedTimeline {
-  const root = asObject(input);
+  const root = Array.isArray(input)
+    ? input.length > 0
+      ? { semanticSegments: input }
+      : null
+    : asObject(input);
   const hasSemantic =
     root !== null && Array.isArray(root.semanticSegments);
   const hasLegacy = root !== null && Array.isArray(root.timelineObjects);
