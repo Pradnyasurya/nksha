@@ -9,3 +9,12 @@
 # One regex per line. Lines starting with # are ignored.
 # Example:
 #   ^src/tiles\.ts:[0-9]+:.*https://tiles\.example\.org/
+
+# ADR-0003 (docs/adr/0003-carto-basemap-tiles.md): Carto raster basemap tiles
+# are the app's only built-in network endpoints.
+^src/features/map/mapStyles\.ts:[0-9]+:.*https://\$\{s\}\.basemaps\.cartocdn\.com/
+
+# ADR-0003: mock URLs in style-handling unit tests; fetch is stubbed, no real
+# request is made.
+^src/features/map/mapStyles\.test\.ts:[0-9]+:.*https?://
+^src/features/map/styleLoader\.test\.ts:[0-9]+:.*https?://
