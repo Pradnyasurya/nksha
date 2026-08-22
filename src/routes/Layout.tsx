@@ -7,6 +7,7 @@ const NAV_ITEMS = [
   { to: "/", label: "Map", end: true },
   { to: "/import", label: "Import" },
   { to: "/trips", label: "Trips" },
+  { to: "/playback", label: "Playback" },
   { to: "/dashboard", label: "Dashboard" },
   { to: "/settings", label: "Settings" },
 ];
