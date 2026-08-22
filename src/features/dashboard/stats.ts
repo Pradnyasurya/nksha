@@ -1,4 +1,6 @@
-import type { Place, Visit } from "@/db/schema";
+import type { Movement, MovementMode, Place, Visit } from "@/db/schema";
+import { MODE_ORDER } from "@/features/movement/modes";
+import { haversineMeters } from "@/lib/geo";
 import { dayKey, eachDay } from "@/lib/days";
 
 export interface DaysAwayOptions {
@@ -112,4 +114,66 @@ export function availableYears(visits: Visit[]): number[] {
   return [...new Set(visits.map((v) => new Date(v.startTimeMs).getFullYear()))]
     .filter((y) => Number.isFinite(y))
     .sort((a, b) => a - b);
+}
+
+// ---------------------------------------------------------------------------
+// Dashboard completion (#11)
+// ---------------------------------------------------------------------------
+
+export interface ModeDistance {
+  mode: MovementMode;
+  distanceMeters: number;
+  movementCount: number;
+}
+
+/** Distance summed per mode from imported activity segments. */
+export function distanceByMode(movements: Movement[]): ModeDistance[] {
+  const totals = new Map<MovementMode, { meters: number; count: number }>();
+  for (const movement of movements) {
+    if (!Number.isFinite(movement.distanceMeters)) continue;
+    const entry = totals.get(movement.mode) ?? { meters: 0, count: 0 };
+    entry.meters += Math.max(0, movement.distanceMeters);
+    entry.count += 1;
+    totals.set(movement.mode, entry);
+  }
+  return MODE_ORDER.filter((mode) => totals.has(mode)).map((mode) => {
+    const entry = totals.get(mode)!;
+    return { mode, distanceMeters: entry.meters, movementCount: entry.count };
+  });
+}
+
+export interface FarthestPlace {
+  place: Place;
+  distanceMeters: number;
+}
+
+/**
+ * The farthest Place with at least one Visit from the declared Home —
+ * the one-line delight card (#11). null without Home or any away visits.
+ */
+export function farthestPlaceFromHome(
+  visits: Visit[],
+  places: Place[],
+  homePlaceId: string,
+): FarthestPlace | null {
+  const home = places.find((p) => p.id === homePlaceId);
+  if (!home) return null;
+  const visitedIds = new Set(visits.map((v) => v.placeId));
+
+  let best: FarthestPlace | null = null;
+  for (const place of places) {
+    if (place.id === homePlaceId || !visitedIds.has(place.id)) continue;
+    const distanceMeters = haversineMeters(
+      { lat: home.lat, lng: home.lng },
+      { lat: place.lat, lng: place.lng },
+    );
+    if (
+      best === null ||
+      distanceMeters > best.distanceMeters ||
+      (distanceMeters === best.distanceMeters && place.name < best.place.name)
+    ) {
+      best = { place, distanceMeters };
+    }
+  }
+  return best;
 }

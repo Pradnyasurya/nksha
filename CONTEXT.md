@@ -24,6 +24,10 @@ _Avoid_: vacation, journey, excursion
 The single Place the user has explicitly designated as their base. The anchor for trip inference and away-time stats; never inferred silently.
 _Avoid_: primary residence, default location
 
+**Movement**:
+A travel span between Visits, imported from an activity segment with a mode (driving/walking/cycling/transit) and a distance. Feeds the dashboard's distance-by-mode; never edited by hand.
+_Avoid_: trip (that's a named window of days), route, leg, transfer
+
 ### Ingestion
 
 **Import**:

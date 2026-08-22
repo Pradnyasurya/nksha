@@ -124,6 +124,11 @@ async function insertParsed(
       importId,
       createdAt: now,
     })),
+    movements: parsed.movements.map((m) => ({
+      ...m,
+      importId,
+      createdAt: now,
+    })),
   });
   const tripsInferred = await runTripInference();
   return {

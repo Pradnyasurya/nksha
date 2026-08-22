@@ -27,8 +27,7 @@ export interface TimelinePoint {
   offsetMinutes: number;
 }
 
-/**
- * A time-spanning stay at a place (arrival/departure). The atomic unit of
+/** A time-spanning stay at a place (arrival/departure). The atomic unit of
  * the product.
  */
 export interface Visit {
@@ -43,6 +42,25 @@ export interface Visit {
   distanceMeters?: number;
   sourceProbability?: number;
   /** Owning import; null for manual records. */
+  importId: string | null;
+  createdAt: number;
+}
+
+export type MovementMode = "driving" | "walking" | "cycling" | "transit" | "other";
+
+/** A travel span between Visits, from an imported activity segment (#11). */
+export interface Movement {
+  id?: number;
+  /** `act:${mode}:${startTimeMs}` — makes re-imports idempotent (#11). */
+  dedupeKey: string;
+  mode: MovementMode;
+  startTimeMs: number;
+  endTimeMs: number | null;
+  distanceMeters: number;
+  startLat?: number | null;
+  startLng?: number | null;
+  endLat?: number | null;
+  endLng?: number | null;
   importId: string | null;
   createdAt: number;
 }
@@ -79,6 +97,7 @@ export interface DismissedTripRange {
 export class NkshaDB extends Dexie {
   places!: Table<Place, string>;
   visits!: Table<Visit, number>;
+  movements!: Table<Movement, number>;
   trips!: Table<Trip, string>;
   imports!: Table<ImportRecord, string>;
   settings!: Table<{ key: string; value: unknown }, string>;
@@ -88,6 +107,15 @@ export class NkshaDB extends Dexie {
     this.version(1).stores({
       places: "id, isHome",
       visits: "++id, &dedupeKey, placeId, startTimeMs",
+      trips: "&id, startDay, endDay, provenance",
+      imports: "&id, importedAt",
+      settings: "&key",
+    });
+    // #11 adds activity-segment distances for the dashboard.
+    this.version(2).stores({
+      places: "id, isHome",
+      visits: "++id, &dedupeKey, placeId, startTimeMs",
+      movements: "++id, &dedupeKey, mode, startTimeMs",
       trips: "&id, startDay, endDay, provenance",
       imports: "&id, importedAt",
       settings: "&key",

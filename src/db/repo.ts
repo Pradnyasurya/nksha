@@ -3,6 +3,7 @@ import type {
   BasemapStyle,
   DismissedTripRange,
   ImportRecord,
+  Movement,
   Place,
   Trip,
   Visit,
@@ -157,12 +158,16 @@ export interface ImportBundle {
   };
   places: Place[];
   visits: Visit[];
+  /** Activity segments from the same file (#11); optional for old callers. */
+  movements?: Movement[];
 }
 
 export interface ImportOutcome {
   placesUpserted: number;
   visitsCreated: number;
   visitsSkipped: number;
+  movementsCreated: number;
+  movementsSkipped: number;
   firstVisitTimeMs: number | null;
   lastVisitTimeMs: number | null;
 }
@@ -179,7 +184,7 @@ export async function insertImportBundle(
   const db = getDb();
   return db.transaction(
     "rw",
-    [db.places, db.visits, db.imports],
+    [db.places, db.visits, db.movements, db.imports],
     async (): Promise<ImportOutcome> => {
       let placesUpserted = 0;
       for (const incoming of bundle.places) {
@@ -219,6 +224,21 @@ export async function insertImportBundle(
         }
       }
 
+      let movementsCreated = 0;
+      let movementsSkipped = 0;
+      for (const movement of bundle.movements ?? []) {
+        try {
+          await db.movements.add(movement);
+          movementsCreated++;
+        } catch (err) {
+          if (isDuplicateKeyError(err)) {
+            movementsSkipped++;
+          } else {
+            throw err;
+          }
+        }
+      }
+
       const record = {
         ...bundle.importRecord,
         visitsCreated: created,
@@ -232,6 +252,8 @@ export async function insertImportBundle(
         placesUpserted,
         visitsCreated: created,
         visitsSkipped: skipped,
+        movementsCreated,
+        movementsSkipped,
         firstVisitTimeMs: first,
         lastVisitTimeMs: last,
       };

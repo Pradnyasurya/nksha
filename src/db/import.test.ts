@@ -32,6 +32,11 @@ function bundleFor(parsed: ParsedTimeline, importId: string) {
       importId,
       createdAt: 1_800_000_000_000,
     })),
+    movements: parsed.movements.map((m) => ({
+      ...m,
+      importId,
+      createdAt: 1_800_000_000_000,
+    })),
   };
 }
 
@@ -139,5 +144,52 @@ describe("insertImportBundle", () => {
     await insertImportBundle(bundleFor(parseTimeline(FILE_A), "imp-a"));
     const manual = await db.places.get("manual:x1");
     expect(manual).toMatchObject({ name: "Hand-added hut" });
+  });
+});
+
+const FILE_WITH_ACTIVITY = {
+  semanticSegments: [
+    {
+      startTime: "2026-03-12T10:00:00Z",
+      endTime: "2026-03-12T13:00:00Z",
+      visit: {
+        topCandidate: {
+          placeId: "ChIJcafe",
+          placeLocation: { latLng: "32.2396°, 77.1887°" },
+        },
+      },
+    },
+    {
+      startTime: "2026-03-12T13:30:00Z",
+      endTime: "2026-03-12T14:30:00Z",
+      activity: {
+        start: { latLng: "32.2396°, 77.1887°" },
+        end: { latLng: "32.2432°, 77.1892°" },
+        distanceMeters: 4200,
+        activityType: "WALKING",
+      },
+    },
+  ],
+};
+
+describe("insertImportBundle movements (#11)", () => {
+  it("stores activity segments alongside visits", async () => {
+    const outcome = await insertImportBundle(
+      bundleFor(parseTimeline(FILE_WITH_ACTIVITY), "imp-m1"),
+    );
+    expect(outcome.movementsCreated).toBe(1);
+    expect(await db.movements.toArray()).toMatchObject([
+      { mode: "walking", distanceMeters: 4200 },
+    ]);
+  });
+
+  it("never duplicates movements across overlapping imports", async () => {
+    await insertImportBundle(bundleFor(parseTimeline(FILE_WITH_ACTIVITY), "imp-m1"));
+    const again = await insertImportBundle(
+      bundleFor(parseTimeline(FILE_WITH_ACTIVITY), "imp-m2"),
+    );
+    expect(again.movementsCreated).toBe(0);
+    expect(again.movementsSkipped).toBe(1);
+    expect(await db.movements.count()).toBe(1);
   });
 });

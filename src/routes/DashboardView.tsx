@@ -1,17 +1,44 @@
 import { useLiveQuery } from "dexie-react-hooks";
 import { useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
+import {
+  Bike,
+  Car,
+  Compass,
+  Footprints,
+  Plus,
+  TrainFront,
+  X,
+} from "lucide-react";
 import { getDb } from "@/db/db";
-import { getHomePlace } from "@/db/repo";
+import type { MovementMode } from "@/db/schema";
+import {
+  addManualCountry,
+  getHomePlace,
+  getManualCountries,
+  removeManualCountry,
+} from "@/db/repo";
+import { useDetectedCountries } from "@/features/countries/useDetectedCountries";
 import {
   availableYears,
   daysAwayFromHome,
+  distanceByMode,
+  farthestPlaceFromHome,
   monthStripDensity,
   topPlacesByDwell,
 } from "@/features/dashboard/stats";
+import { MODE_LABELS } from "@/features/movement/modes";
 import { cn } from "@/lib/cn";
 
 const MONTH_LABELS = ["J", "F", "M", "A", "M", "J", "J", "A", "S", "O", "N", "D"];
+
+const MODE_ICONS: Record<MovementMode, typeof Car> = {
+  driving: Car,
+  walking: Footprints,
+  cycling: Bike,
+  transit: TrainFront,
+  other: Compass,
+};
 
 function formatDuration(ms: number): string {
   const hours = ms / 3_600_000;
@@ -20,16 +47,43 @@ function formatDuration(ms: number): string {
   return `${days} d`;
 }
 
+function formatDistance(meters: number): string {
+  if (meters < 1000) return `${Math.round(meters)} m`;
+  const km = meters / 1000;
+  if (km < 100) return `${km.toFixed(1)} km`;
+  return `${Math.round(km).toLocaleString()} km`;
+}
+
+function isValidIsoA3(value: string): boolean {
+  return /^[A-Za-z]{3}$/.test(value.trim());
+}
+
 export default function DashboardView() {
   const navigate = useNavigate();
   const places = useLiveQuery(() => getDb().places.toArray(), [], []);
   const visits = useLiveQuery(() => getDb().visits.toArray(), [], []);
+  const movements = useLiveQuery(() => getDb().movements.toArray(), [], []);
   const home = useLiveQuery(() => getHomePlace(), [], undefined);
+  const manualCountries = useLiveQuery(() => getManualCountries(), [], [] as string[]);
+  const { detected, names, status: countryStatus } = useDetectedCountries(places);
 
   const years = useMemo(() => availableYears(visits), [visits]);
   const [year, setYear] = useState<number | null>(null);
   const [mountedAtMs] = useState(() => Date.now());
   const selectedYear = year ?? years[years.length - 1];
+
+  const modeDistances = useMemo(() => distanceByMode(movements), [movements]);
+  const farthest = useMemo(
+    () => (home ? farthestPlaceFromHome(visits, places, home.id) : null),
+    [visits, places, home],
+  );
+  const countryCodes = useMemo(() => {
+    const merged = new Set(detected);
+    for (const code of manualCountries) merged.add(code.toUpperCase());
+    return [...merged].sort((a, b) =>
+      (names[a] ?? a).localeCompare(names[b] ?? b),
+    );
+  }, [detected, manualCountries, names]);
 
   if (visits.length === 0) {
     return (
@@ -102,6 +156,56 @@ export default function DashboardView() {
       </section>
 
       <section className="rounded-lg border border-border bg-card p-4">
+        <h2 className="text-sm font-medium">Distance by mode</h2>
+        {modeDistances.length === 0 ? (
+          <p className="mt-2 text-sm text-muted-foreground">
+            No travel distances yet — they come from activity segments in your
+            Timeline import.
+          </p>
+        ) : (
+          <ol className="mt-3 space-y-2">
+            {modeDistances.map((entry) => {
+              const Icon = MODE_ICONS[entry.mode];
+              return (
+                <li key={entry.mode} className="flex items-center gap-2 text-sm">
+                  <Icon size={15} aria-hidden className="shrink-0 text-muted-foreground" />
+                  <span>{MODE_LABELS[entry.mode]}</span>
+                  <span className="ml-auto shrink-0 text-muted-foreground tabular-nums">
+                    {formatDistance(entry.distanceMeters)}
+                  </span>
+                </li>
+              );
+            })}
+          </ol>
+        )}
+      </section>
+
+      <section className="rounded-lg border border-border bg-card p-4">
+        <h2 className="text-sm font-medium">Farthest place from Home</h2>
+        {farthest ? (
+          <p className="mt-2 text-sm" data-testid="farthest-place">
+            <span className="font-semibold">{farthest.place.name}</span>{" "}
+            <span className="tabular-nums text-muted-foreground">
+              · {formatDistance(farthest.distanceMeters)} from {home?.name}
+            </span>
+          </p>
+        ) : (
+          <p className="mt-2 text-sm text-muted-foreground">
+            {home
+              ? "Visit somewhere farther to fill this card."
+              : "Declare a Home first — nksha never guesses it."}
+          </p>
+        )}
+      </section>
+
+      <CountriesCard
+        codes={countryCodes}
+        names={names}
+        manual={manualCountries}
+        status={countryStatus}
+      />
+
+      <section className="rounded-lg border border-border bg-card p-4">
         <div className="flex items-center justify-between">
           <h2 className="text-sm font-medium">{selectedYear}</h2>
           {years.length > 1 && (
@@ -153,5 +257,115 @@ export default function DashboardView() {
         </p>
       </section>
     </div>
+  );
+}
+
+function CountriesCard({
+  codes,
+  names,
+  manual,
+  status,
+}: {
+  codes: string[];
+  names: Record<string, string>;
+  manual: string[];
+  status: "working" | "done" | "error";
+}) {
+  const [draft, setDraft] = useState("");
+  const [error, setError] = useState<string | null>(null);
+
+  async function addManual(event: React.FormEvent): Promise<void> {
+    event.preventDefault();
+    const code = draft.trim().toUpperCase();
+    if (!isValidIsoA3(code)) {
+      setError("Use a three-letter country code, e.g. ARE or CHE.");
+      return;
+    }
+    if (codes.includes(code)) {
+      setError(`${code} is already on the list.`);
+      return;
+    }
+    setError(null);
+    await addManualCountry(code);
+    setDraft("");
+  }
+
+  const manualSet = new Set(manual.map((c) => c.toUpperCase()));
+
+  return (
+    <section className="rounded-lg border border-border bg-card p-4">
+      <h2 className="text-sm font-medium">Countries visited</h2>
+      {status === "error" && (
+        <p className="mt-2 text-sm text-muted-foreground" role="alert">
+          Country detection failed — manual entries still work.
+        </p>
+      )}
+      {codes.length === 0 && status !== "error" ? (
+        <p className="mt-2 text-sm text-muted-foreground">
+          {status === "working"
+            ? "Matching your places against country polygons…"
+            : "No countries detected yet."}
+        </p>
+      ) : (
+        <p className="mt-1 text-xs text-muted-foreground tabular-nums">
+          {codes.length} {codes.length === 1 ? "country" : "countries"} ·{" "}
+          {manualSet.size} added by hand
+        </p>
+      )}
+
+      <ul className="mt-3 flex flex-wrap gap-1.5">
+        {codes.map((code) => {
+          const isManual = manualSet.has(code);
+          return (
+            <li
+              key={code}
+              className="flex items-center gap-1 rounded-full border border-border px-2.5 py-1 text-xs"
+            >
+              <span>{names[code] ?? code}</span>
+              <span className="text-[10px] text-muted-foreground">{code}</span>
+              {isManual && (
+                <button
+                  type="button"
+                  aria-label={`Remove ${names[code] ?? code}`}
+                  className="ml-0.5 rounded-full p-0.5 hover:bg-muted"
+                  onClick={() => void removeManualCountry(code)}
+                >
+                  <X size={12} aria-hidden />
+                </button>
+              )}
+            </li>
+          );
+        })}
+      </ul>
+
+      <form onSubmit={(e) => void addManual(e)} className="mt-3 flex items-center gap-2">
+        <input
+          value={draft}
+          onChange={(e) => {
+            setDraft(e.target.value);
+            setError(null);
+          }}
+          placeholder="Add a country (ISO code)"
+          aria-label="Add a country manually"
+          maxLength={3}
+          className="h-8 w-56 rounded-md border border-border bg-background px-2 text-sm"
+        />
+        <button
+          type="submit"
+          className="flex h-8 items-center gap-1 rounded-md border border-border px-2.5 text-xs hover:bg-muted"
+        >
+          <Plus size={13} aria-hidden /> Add manually
+        </button>
+      </form>
+      {error && (
+        <p role="alert" className="mt-1.5 text-xs text-destructive">
+          {error}
+        </p>
+      )}
+      <p className="mt-2 text-[10px] text-muted-foreground">
+        Detected from your places with a ~50 km coastal snap; layovers and
+        disputed borders can be added by hand and are never revoked by imports.
+      </p>
+    </section>
   );
 }

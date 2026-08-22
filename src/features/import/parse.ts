@@ -1,4 +1,5 @@
 import type { TimelinePoint } from "@/db/schema";
+import { normalizeActivityType } from "@/features/movement/modes";
 
 export interface ParsedPlace {
   id: string;
@@ -17,9 +18,23 @@ export interface ParsedVisit {
   sourceProbability?: number;
 }
 
+/** One activity segment: travel between places with a mode and distance (#11). */
+export interface ParsedMovement {
+  dedupeKey: string;
+  mode: NonNullable<ReturnType<typeof normalizeActivityType>>;
+  startTimeMs: number;
+  endTimeMs: number | null;
+  distanceMeters: number;
+  startLat?: number | null;
+  startLng?: number | null;
+  endLat?: number | null;
+  endLng?: number | null;
+}
+
 export interface ParsedTimeline {
   places: ParsedPlace[];
   visits: ParsedVisit[];
+  movements: ParsedMovement[];
   skippedSegments: number;
 }
 
@@ -93,7 +108,7 @@ function collectSemanticFormat(root: Json, result: ParsedTimeline): void {
     const visit = asObject(segment.visit);
     const topCandidate = visit ? asObject(visit.topCandidate) : null;
     if (!visit || !topCandidate) {
-      result.skippedSegments++;
+      collectSemanticActivity(segment, result);
       continue;
     }
 
@@ -144,6 +159,62 @@ function collectSemanticFormat(root: Json, result: ParsedTimeline): void {
   }
 }
 
+/**
+ * Semantic activity segment: travel between two points with a mode and a
+ * distance (#11). Segments without any usable activity are skipped.
+ */
+function collectSemanticActivity(
+  segment: Json,
+  result: ParsedTimeline,
+): void {
+  const activity = asObject(segment.activity);
+  if (!activity) {
+    result.skippedSegments++;
+    return;
+  }
+  const startMs = parseTimestamp(segment.startTime);
+  if (startMs === null) {
+    result.skippedSegments++;
+    return;
+  }
+  const endMs = parseTimestamp(segment.endTime);
+
+  const rawType =
+    typeof activity.activityType === "string"
+      ? activity.activityType
+      : asObject(activity.topCandidate)?.type;
+  const mode = normalizeActivityType(rawType);
+  if (!mode) {
+    result.skippedSegments++;
+    return;
+  }
+
+  const distance = parseDistance(activity.distanceMeters);
+  const startCoords = parseLatLngString(asObject(activity.start)?.latLng);
+  const endCoords = parseLatLngString(asObject(activity.end)?.latLng);
+
+  result.movements.push({
+    dedupeKey: `act:${mode}:${startMs}`,
+    mode,
+    startTimeMs: startMs,
+    endTimeMs: endMs,
+    distanceMeters: distance,
+    ...(startCoords ? { startLat: startCoords.lat, startLng: startCoords.lng } : {}),
+    ...(endCoords ? { endLat: endCoords.lat, endLng: endCoords.lng } : {}),
+  });
+}
+
+function parseDistance(value: unknown): number {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return Math.max(0, value);
+  }
+  if (typeof value === "string") {
+    const parsed = Number(value);
+    if (Number.isFinite(parsed)) return Math.max(0, parsed);
+  }
+  return 0;
+}
+
 function collectLegacyFormat(root: Json, result: ParsedTimeline): void {
   const objects = root.timelineObjects;
   if (!Array.isArray(objects)) return;
@@ -151,7 +222,13 @@ function collectLegacyFormat(root: Json, result: ParsedTimeline): void {
   for (const raw of objects) {
     const entry = asObject(raw);
     const placeVisit = entry ? asObject(entry.placeVisit) : null;
-    if (!entry || !placeVisit) continue;
+    if (!entry || !placeVisit) {
+      const activitySegment = entry ? asObject(entry.activitySegment) : null;
+      if (activitySegment) {
+        collectLegacyActivity(activitySegment, result);
+      }
+      continue;
+    }
     const location = asObject(placeVisit.location);
     const duration = asObject(placeVisit.duration);
     if (!location || !duration) {
@@ -205,6 +282,43 @@ function collectLegacyFormat(root: Json, result: ParsedTimeline): void {
   }
 }
 
+/** Legacy activitySegment: E7 endpoints, ms timestamps, metres distance. */
+function collectLegacyActivity(
+  segment: Json,
+  result: ParsedTimeline,
+): void {
+  const startMs = parseTimestamp(asObject(segment.duration)?.startTimestampMs);
+  if (startMs === null) {
+    result.skippedSegments++;
+    return;
+  }
+  const endMs = parseTimestamp(asObject(segment.duration)?.endTimestampMs);
+  const mode = normalizeActivityType(segment.activityType);
+  if (!mode) {
+    result.skippedSegments++;
+    return;
+  }
+
+  const startLat = e7ToDegrees(asObject(segment.startLocation)?.latitudeE7);
+  const startLng = e7ToDegrees(asObject(segment.startLocation)?.longitudeE7);
+  const endLat = e7ToDegrees(asObject(segment.endLocation)?.latitudeE7);
+  const endLng = e7ToDegrees(asObject(segment.endLocation)?.longitudeE7);
+
+  result.movements.push({
+    dedupeKey: `act:${mode}:${startMs}`,
+    mode,
+    startTimeMs: startMs,
+    endTimeMs: endMs,
+    distanceMeters: parseDistance(segment.distance),
+    ...(startLat !== null && startLng !== null
+      ? { startLat, startLng }
+      : {}),
+    ...(endLat !== null && endLng !== null
+      ? { endLat, endLng }
+      : {}),
+  });
+}
+
 /**
  * Parse a Google Maps Timeline export into Places and Visits.
  * Accepts the phone "semanticSegments" format and the legacy
@@ -224,6 +338,7 @@ export function parseTimeline(input: unknown): ParsedTimeline {
   const result: ParsedTimeline = {
     places: [],
     visits: [],
+    movements: [],
     skippedSegments: 0,
   };
   if (hasSemantic) collectSemanticFormat(root, result);

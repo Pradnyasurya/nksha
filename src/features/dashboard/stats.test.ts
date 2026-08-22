@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   availableYears,
   daysAwayFromHome,
+  distanceByMode,
+  farthestPlaceFromHome,
   monthStripDensity,
   topPlacesByDwell,
   visitsInMonth,
@@ -146,5 +148,111 @@ describe("availableYears", () => {
     expect(availableYears([...FIXTURE, visit(AWAY_A, "2024-08-01T00:00:00", null)])).toEqual([
       2024, 2026,
     ]);
+  });
+});
+
+describe("distanceByMode (#11)", () => {
+  function movement(mode: string, meters: number) {
+    return {
+      dedupeKey: `act:${mode}:${meters}`,
+      mode: mode as never,
+      startTimeMs: 0,
+      endTimeMs: null,
+      distanceMeters: meters,
+      importId: null,
+      createdAt: 0,
+    };
+  }
+
+  it("sums distances per mode in dashboard order", () => {
+    const totals = distanceByMode([
+      movement("driving", 1000),
+      movement("driving", 2500),
+      movement("walking", 300),
+      movement("transit", 10_000),
+      movement("cycling", 4200),
+      movement("other", 999),
+    ]);
+    expect(totals.map((t) => t.mode)).toEqual([
+      "driving",
+      "walking",
+      "cycling",
+      "transit",
+      "other",
+    ]);
+    expect(totals[0].distanceMeters).toBe(3500);
+    expect(totals[0].movementCount).toBe(2);
+    expect(totals[1].distanceMeters).toBe(300);
+    expect(totals[2].distanceMeters).toBe(4200);
+    expect(totals[3].distanceMeters).toBe(10_000);
+    expect(totals[4].distanceMeters).toBe(999);
+  });
+
+  it("omits modes with no movements and ignores negative garbage", () => {
+    const totals = distanceByMode([
+      movement("walking", -5),
+      movement("walking", 700),
+    ]);
+    expect(totals).toHaveLength(1);
+    expect(totals[0]).toEqual({
+      mode: "walking",
+      distanceMeters: 700,
+      movementCount: 2,
+    });
+  });
+
+  it("returns empty for empty input", () => {
+    expect(distanceByMode([])).toEqual([]);
+  });
+});
+
+describe("farthestPlaceFromHome (#11)", () => {
+  /** Places at explicit coordinates along the equator. */
+  function placeAt(id: string, lat: number, lng: number): Place {
+    return {
+      id,
+      name: `Place ${id}`,
+      address: "",
+      lat,
+      lng,
+      isHome: id === HOME ? 1 : 0,
+      createdAt: 0,
+    };
+  }
+
+  it("picks the visited place farthest from Home", () => {
+    const home = placeAt(HOME, 0, 0);
+    const near = placeAt(AWAY_A, 1, 0);
+    const far = placeAt(AWAY_B, 5, 0);
+    // Only visited places qualify — B has no visit here.
+    const best = farthestPlaceFromHome(
+      [visit(AWAY_A, "2026-03-12T09:00:00", "2026-03-19T18:00:00")],
+      [home, near, far],
+      HOME,
+    );
+    expect(best?.place.id).toBe(AWAY_A);
+    expect(best!.distanceMeters).toBeGreaterThan(110_000);
+    expect(best!.distanceMeters).toBeLessThan(115_000);
+  });
+
+  it("prefers a farther place once any visit reaches it", () => {
+    const home = placeAt(HOME, 0, 0);
+    const near = placeAt(AWAY_A, 1, 0);
+    const far = placeAt(AWAY_B, 5, 0);
+    const best = farthestPlaceFromHome(
+      [
+        visit(AWAY_A, "2026-03-12T09:00:00", "2026-03-19T18:00:00"),
+        visit(AWAY_B, "2026-04-02T08:00:00", "2026-04-02T20:00:00"),
+      ],
+      [home, near, far],
+      HOME,
+    );
+    expect(best?.place.id).toBe(AWAY_B);
+  });
+
+  it("returns null without a home or without visits", () => {
+    const home = placeAt(HOME, 0, 0);
+    expect(farthestPlaceFromHome([visit(HOME, "2026-05-01T10:00:00", null)], [home], "missing")).toBeNull();
+    expect(farthestPlaceFromHome([], [home], HOME)).toBeNull();
   });
 });
