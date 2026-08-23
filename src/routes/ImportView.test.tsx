@@ -6,10 +6,15 @@ import { buildDiagnostic } from "@/features/import/diagnostics";
 import { openTestDb, disposeTestDb } from "@/test/testDb";
 import type { ImportReport, ImportState } from "@/features/import/useImporter";
 
+function formatYear(ms: number): string {
+  return new Date(ms).toLocaleDateString(undefined, { year: "numeric" });
+}
+
 const REPORT: ImportReport = {
   placesFound: 12,
   visitsCreated: 340,
   visitsSkipped: 4,
+  visitsInFile: 344,
   movementsCreated: 210,
   firstVisitTimeMs: Date.UTC(2019, 2, 1),
   lastVisitTimeMs: Date.UTC(2026, 3, 20),
@@ -107,14 +112,35 @@ describe("ImportView ceremony (#import-ceremony)", () => {
     expect(screen.getByRole("button", { name: /Save local report/ })).toBeTruthy();
   });
 
-  it("warns loudly when an import produces zero visits", () => {
+  it("warns loudly only when the file itself contains no visits", () => {
     mockState({
       phase: "done",
       fileName: "empty-ish.json",
-      report: { ...REPORT, visitsCreated: 0 },
+      report: { ...REPORT, visitsCreated: 0, visitsInFile: 0, visitsSkipped: 0 },
     });
     renderView();
     expect(screen.getByRole("alert").textContent).toContain("No visits came out of this file");
+  });
+
+  it("treats an all-duplicates import as a successful merge, not a failure", () => {
+    mockState({
+      phase: "done",
+      fileName: "timeline.json",
+      report: { ...REPORT, visitsCreated: 0, visitsSkipped: 73, visitsInFile: 73 },
+    });
+    renderView();
+    // No false "your map will stay empty" alert…
+    expect(screen.queryByRole("alert")).toBeNull();
+    // …and a clear all-duplicates note instead.
+    const note = document.querySelector('[data-testid="duplicate-import-note"]')!;
+    expect(note.textContent).toContain(
+      "All 73 visits were already in your atlas. Nothing was changed.",
+    );
+    // The file's own date range still renders (not — – —).
+    expect(note.textContent ?? "").toBeTruthy();
+    expect(document.querySelector('[data-testid="import-report"]')!.textContent).toContain(
+      formatYear(Date.UTC(2019, 2, 1)),
+    );
   });
 
   it("diagnostics carry structure and counts only — never coordinates or names", () => {

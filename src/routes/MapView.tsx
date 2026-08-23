@@ -52,9 +52,12 @@ export default function MapView() {
   const [notice, setNotice] = useState<string | null>(null);
   const [tilesOffline, setTilesOffline] = useState(false);
   const [styleVersion, setStyleVersion] = useState(0);
+  const [initialStyleLoaded, setInitialStyleLoaded] = useState(false);
   const [selectedVisitId, setSelectedVisitId] = useState<number | null>(null);
   const [showListView, setShowListView] = useState(false);
   const [query, setQuery] = useState("");
+  const [searchFocused, setSearchFocused] = useState(false);
+  const [highlighted, setHighlighted] = useState(0);
   const [mutedYears, setMutedYears] = useState<Set<number>>(new Set());
 
   const preference =
@@ -86,6 +89,27 @@ export default function MapView() {
     });
   }, [visits, places, query]);
 
+  // Aggregated per-place search matches for the results dropdown (#map-search):
+  // the same query drives both this panel and the map filter, so the count
+  // always agrees with what the map actually shows.
+  const searchMatches = useMemo(() => {
+    if (!query.trim()) return [];
+    const byId = placeIndex(places);
+    const agg = new Map<string, { place: Place; count: number; last: number }>();
+    for (const visit of searchedVisits) {
+      const place = byId.get(visit.placeId);
+      if (!place) continue;
+      const entry = agg.get(place.id) ?? { place, count: 0, last: 0 };
+      entry.count += 1;
+      entry.last = Math.max(entry.last, visit.startTimeMs);
+      agg.set(place.id, entry);
+    }
+    return [...agg.values()].sort((a, b) => b.last - a.last).slice(0, 8);
+  }, [searchedVisits, places, query]);
+
+  // Suggested years shown before typing (#map-search): one-tap year filters.
+  const suggestedYears = years.slice(-4).reverse();
+
   const monthVisitIds = useMemo(() => {
     if (!monthFocus) return null;
     return new Set(
@@ -109,6 +133,10 @@ export default function MapView() {
       container: containerRef.current,
       style: buildCartoStyle("dark"),
     });
+    // The creation-time style counts as applied — the style effect below must
+    // not re-issue it while the initial style is still loading, or MapLibre
+    // logs "Unable to perform style diff" and rebuilds from scratch.
+    appliedKeyRef.current = "dark|";
     map.addControl(new NavigationControl(), "top-right");
 
     map.on("click", (event) => {
@@ -155,7 +183,10 @@ export default function MapView() {
     });
 
     const bump = () => setStyleVersion((v) => v + 1);
-    map.on("load", bump);
+    map.on("load", () => {
+      setInitialStyleLoaded(true);
+      bump();
+    });
     map.on("style.load", bump);
 
     mapRef.current = map;
@@ -171,8 +202,15 @@ export default function MapView() {
     const map = mapRef.current;
     if (!map) return;
 
+    // The map is created with this exact style, so re-issuing it would only
+    // trigger "Unable to perform style diff" rebuilds (#maplibre-warning).
+    // Track it as already-applied; later preference changes still flow through.
     const key = `${preference}|${customUrl.trim()}`;
     if (key === appliedKeyRef.current) return;
+    // Never touch setStyle before the initial style has finished loading —
+    // MapLibre cannot diff a half-loaded style and rebuilds from scratch.
+    if (!initialStyleLoaded) return;
+    appliedKeyRef.current = key;
 
     let cancelled = false;
     const resolved = resolveMapStyle(preference, customUrl);
@@ -213,7 +251,7 @@ export default function MapView() {
     return () => {
       cancelled = true;
     };
-  }, [preference, customUrl]);
+  }, [initialStyleLoaded, preference, customUrl]);
 
   useEffect(() => {
     const map = mapRef.current;
@@ -341,9 +379,36 @@ export default function MapView() {
             <input
               type="search"
               value={query}
-              onChange={(e) => setQuery(e.target.value)}
+              onChange={(e) => {
+                setQuery(e.target.value);
+                setHighlighted(0);
+              }}
+              onFocus={() => setSearchFocused(true)}
+              onBlur={() => setSearchFocused(false)}
+              onKeyDown={(e) => {
+                if (searchMatches.length === 0) return;
+                if (e.key === "ArrowDown") {
+                  e.preventDefault();
+                  setHighlighted((h) => (h + 1) % searchMatches.length);
+                } else if (e.key === "ArrowUp") {
+                  e.preventDefault();
+                  setHighlighted(
+                    (h) => (h - 1 + searchMatches.length) % searchMatches.length,
+                  );
+                } else if (e.key === "Enter") {
+                  e.preventDefault();
+                  const match = searchMatches[highlighted];
+                  if (match) {
+                    focusFromList(match.place.id);
+                    setSearchFocused(false);
+                  }
+                }
+              }}
               placeholder="Search places, years…"
               aria-label="Search your history"
+              role="combobox"
+              aria-expanded={searchFocused && query.trim() !== ""}
+              aria-controls="map-search-results"
               className="h-11 w-full rounded-lg border border-border bg-card/95 pl-8 pr-8 text-sm shadow backdrop-blur placeholder:text-muted-foreground"
             />
             {query && (
@@ -351,10 +416,92 @@ export default function MapView() {
                 type="button"
                 aria-label="Clear search"
                 className="absolute right-1.5 top-1/2 flex size-7 -translate-y-1/2 items-center justify-center rounded text-muted-foreground hover:bg-muted"
-                onClick={() => setQuery("")}
+                onClick={() => {
+                  setQuery("");
+                  setHighlighted(0);
+                }}
               >
                 <X size={13} aria-hidden />
               </button>
+            )}
+
+            {/* Results panel (#map-search): the query's effect is never silent,
+                even with the place-list closed. */}
+            {(query.trim() !== "" || suggestedYears.length > 0) &&
+              visits.length > 0 && (
+              <div
+                id="map-search-results"
+                data-testid="map-search-panel"
+                aria-label="Search results"
+                className="absolute left-0 right-0 top-[3.25rem] max-h-72 overflow-y-auto rounded-lg border border-border bg-card/95 p-1.5 text-sm shadow-lg backdrop-blur"
+              >
+                {query.trim() === "" ? (
+                  <div className="p-1">
+                    <p className="px-1 pb-1 text-[11px] uppercase tracking-wide text-muted-foreground">
+                      Suggested years
+                    </p>
+                    <div className="flex flex-wrap gap-1.5">
+                      {suggestedYears.map((y) => (
+                        <button
+                          key={y}
+                          type="button"
+                          onMouseDown={(e) => e.preventDefault()}
+                          onClick={() => setQuery(String(y))}
+                          className="min-h-9 rounded-full border border-border px-3 py-1 text-xs tabular-nums hover:bg-muted"
+                        >
+                          {y}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                ) : searchMatches.length === 0 ? (
+                  <p role="status" data-testid="map-search-empty" className="p-3 text-xs text-muted-foreground">
+                    No matches for “{query.trim()}”. The map shows no pins for
+                    this filter — clear the search to bring everything back.
+                  </p>
+                ) : (
+                  <>
+                    <p role="status" className="px-2 py-1 text-[11px] text-muted-foreground">
+                      {focusedVisits.length}{" "}
+                      {focusedVisits.length === 1 ? "visit" : "visits"} in{" "}
+                      {searchMatches.length}{" "}
+                      {searchMatches.length === 1 ? "place" : "places"} · ↑↓ to
+                      move, Enter to jump
+                    </p>
+                    <ul role="listbox" aria-label="Matching places">
+                      {searchMatches.map((match, index) => (
+                        <li key={match.place.id} role="option" aria-selected={index === highlighted}>
+                          <button
+                            type="button"
+                            tabIndex={-1}
+                            onMouseDown={(e) => {
+                              e.preventDefault();
+                              focusFromList(match.place.id);
+                              setSearchFocused(false);
+                            }}
+                            onMouseEnter={() => setHighlighted(index)}
+                            className={cn(
+                              "flex min-h-10 w-full items-center justify-between gap-2 rounded px-2 py-1.5 text-left",
+                              index === highlighted ? "bg-accent" : "hover:bg-muted",
+                            )}
+                          >
+                            <span className="min-w-0 truncate">
+                              {match.place.name || "Unnamed place"}
+                              <span className="block truncate text-xs text-muted-foreground">
+                                {match.count} {match.count === 1 ? "visit" : "visits"} ·{" "}
+                                {new Date(match.last).toLocaleDateString(undefined, {
+                                  year: "numeric",
+                                  month: "short",
+                                })}
+                              </span>
+                            </span>
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  </>
+                )}
+              </div>
             )}
           </div>
           <button

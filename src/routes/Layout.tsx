@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { NavLink, Outlet } from "react-router-dom";
+import { NavLink, Outlet, useLocation } from "react-router-dom";
 import { useLiveQuery } from "dexie-react-hooks";
 import {
   BarChart3,
@@ -44,6 +44,7 @@ function desktopLinkClass({ isActive }: { isActive: boolean }): string {
 }
 
 export function Layout() {
+  const { pathname } = useLocation();
   const style = useLiveQuery(() => getBasemapStyle(), [], "dark");
   // undefined while loading — never flash either the welcome screen or the
   // navigation chrome before the database has answered.
@@ -51,6 +52,10 @@ export function Layout() {
   const dark = style === "dark";
   const loaded = typeof visitCount === "number";
   const firstRun = loaded && visitCount === 0;
+  // The welcome story owns only the map route. /import and /settings must
+  // stay reachable on a fresh install, or the CTA loops back to the same
+  // screen (#first-run, P0).
+  const showWelcome = firstRun && pathname === "/";
   const [menuOpen, setMenuOpen] = useState(false);
 
   return (
@@ -161,7 +166,7 @@ export function Layout() {
       )}
 
       <main id="main-content" tabIndex={-1} className="min-h-0 min-w-0 flex-1">
-        {firstRun ? <WelcomeView /> : <Outlet />}
+        {showWelcome ? <WelcomeView /> : <Outlet />}
       </main>
 
       {/* Mobile bottom navigation: the four main destinations. */}
