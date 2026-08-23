@@ -1,5 +1,5 @@
 import { Suspense, lazy } from "react";
-import { Route, Routes } from "react-router-dom";
+import { Navigate, Route, Routes, useSearchParams } from "react-router-dom";
 import { Layout } from "@/routes/Layout";
 
 /**
@@ -11,9 +11,16 @@ const MapView = lazy(() => import("@/routes/MapView"));
 const ImportView = lazy(() => import("@/routes/ImportView"));
 const TripsView = lazy(() => import("@/routes/TripsView"));
 const PlaybackView = lazy(() => import("@/routes/PlaybackView"));
-const HeatmapView = lazy(() => import("@/routes/HeatmapView"));
 const DashboardView = lazy(() => import("@/routes/DashboardView"));
 const SettingsView = lazy(() => import("@/routes/SettingsView"));
+
+/** Heatmap is now an Atlas layer: /heatmap redirects to /?layer=heat. */
+function HeatmapRedirect() {
+  const [params] = useSearchParams();
+  const next = new URLSearchParams(params);
+  next.set("layer", "heat");
+  return <Navigate to={`/?${next.toString()}`} replace />;
+}
 
 export default function App() {
   return (
@@ -51,14 +58,7 @@ export default function App() {
             </Suspense>
           }
         />
-        <Route
-          path="heatmap"
-          element={
-            <Suspense fallback={<RouteFallback />}>
-              <HeatmapView />
-            </Suspense>
-          }
-        />
+        <Route path="heatmap" element={<HeatmapRedirect />} />
         <Route
           path="dashboard"
           element={
@@ -87,3 +87,4 @@ function RouteFallback() {
     </div>
   );
 }
+

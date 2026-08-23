@@ -1,33 +1,21 @@
 import { Link } from "react-router-dom";
 import {
+  HardDrive,
+  HelpCircle,
   Lock,
-  MapPin,
-  Play,
   ShieldCheck,
-  Sparkles,
   Upload,
+  UserX,
 } from "lucide-react";
 import { BrandMark } from "@/components/BrandMark";
 
-const BENEFITS = [
-  {
-    Icon: MapPin,
-    title: "Explore your places",
-    body: "Every stay becomes a pin on your own private map.",
-  },
-  {
-    Icon: Play,
-    title: "Replay your years",
-    body: "Watch trips draw themselves across months and years.",
-  },
-  {
-    Icon: Sparkles,
-    title: "Find your patterns",
-    body: "Dwell heat, top places, and trips you never wrote down.",
-  },
+const PRIVACY_FACTS = [
+  { Icon: ShieldCheck, text: "Parsed in this browser" },
+  { Icon: HardDrive, text: "Stored on this device" },
+  { Icon: UserX, text: "No account or telemetry" },
 ];
 
-/** Hand-drawn synthetic preview — no real coordinates, purely decorative. */
+/** Hand-drawn synthetic preview — fictional places only, purely decorative. */
 function PreviewArt() {
   const dots: Array<[number, number, number]> = [
     [22, 62, 0.9],
@@ -48,16 +36,13 @@ function PreviewArt() {
       className="h-full w-full"
       preserveAspectRatio="xMidYMid meet"
     >
-      {/* grid */}
       {[15, 30, 45, 60, 75, 90].map((x) => (
         <line key={x} x1={x} y1="4" x2={x} y2="74" stroke="var(--border)" strokeWidth="0.25" />
       ))}
       {[14, 28, 42, 56, 70].map((y) => (
         <line key={y} x1="6" y1={y} x2="96" y2={y} stroke="var(--border)" strokeWidth="0.25" />
       ))}
-      {/* route trace */}
       <path d={path} fill="none" stroke="var(--primary)" strokeWidth="0.9" strokeLinecap="round" strokeDasharray="2.2 1.6" opacity="0.85" />
-      {/* pins */}
       {dots.map(([x, y, r], i) => (
         <g key={i}>
           <circle cx={x} cy={y} r={r * 3.2} fill="var(--primary)" opacity="0.16" />
@@ -71,91 +56,66 @@ function PreviewArt() {
 export function WelcomeView() {
   return (
     <div className="paper-texture h-full min-w-0 overflow-y-auto">
-      <div className="mx-auto flex max-w-2xl flex-col gap-8 px-5 py-10 sm:py-14">
-        <header className="flex flex-col items-center gap-4 text-center">
+      <div className="mx-auto flex max-w-3xl flex-col gap-10 px-5 py-12 sm:py-16">
+        <header className="flex flex-col items-center gap-5 text-center">
           <BrandMark size={44} />
-          <p className="text-[11px] font-medium uppercase tracking-[0.25em] text-muted-foreground">
+          <p className="text-xs font-medium uppercase tracking-[0.25em] text-muted-foreground">
             nksha · personal cartography
           </p>
-          <h1 className="text-4xl font-semibold leading-tight sm:text-5xl">
-            Your life, mapped privately.
-          </h1>
-          <p className="max-w-md text-base text-muted-foreground">
-            nksha turns the timeline Google already keeps about you into an
-            atlas only you can see — it never leaves this device.
+          <h1 className="display max-w-xl">Your travels, kept close.</h1>
+          <p className="max-w-lg text-base leading-relaxed text-muted-foreground sm:text-lg">
+            Turn your Google Timeline export into a private atlas that stays in
+            this browser.
           </p>
         </header>
 
-        <div className="overflow-hidden rounded-xl border border-border bg-card shadow-sm">
-          <div className="h-44 border-b border-border p-3 sm:h-52">
+        {/* Product proof: a large synthetic atlas moment. */}
+        <figure className="overflow-hidden rounded-sheet border border-border bg-card shadow-low">
+          <div className="h-52 border-b border-border p-4 sm:h-64">
             <PreviewArt />
           </div>
-          <div className="flex flex-wrap items-center justify-between gap-2 px-4 py-3 text-xs text-muted-foreground">
-            <span>8 years · 214 places · 19 trips</span>
-            <span className="inline-flex items-center gap-1 rounded-full border border-primary/40 bg-accent px-2 py-0.5 font-medium text-foreground">
-              <Lock size={11} aria-hidden /> Sample preview
+          <figcaption className="flex flex-wrap items-center justify-between gap-2 px-5 py-4">
+            <div>
+              <p className="font-display text-base font-semibold">
+                A week in the mountains
+              </p>
+              <p className="mt-0.5 text-sm text-muted-foreground tabular">
+                6 places · 1 story · 214 km travelled
+              </p>
+            </div>
+            <span className="inline-flex items-center gap-1.5 rounded-full border border-primary/40 bg-accent px-3 py-1 text-xs font-medium text-foreground">
+              <Lock size={11} aria-hidden /> Example atlas
             </span>
-          </div>
-        </div>
+          </figcaption>
+        </figure>
 
-        <section className="flex justify-center">
+        <section className="flex flex-col items-center gap-3">
           <Link
             to="/import"
-            className="flex min-h-12 items-center gap-2 rounded-lg bg-primary px-6 text-base font-medium text-primary-foreground shadow hover:opacity-90"
+            data-testid="welcome-primary-cta"
+            className="flex min-h-13 items-center gap-2 rounded-xl bg-primary px-7 py-3 text-base font-medium text-primary-foreground shadow-low transition-opacity hover:opacity-90"
           >
             <Upload size={18} aria-hidden />
-            Import your timeline
+            Choose timeline file
+          </Link>
+          <Link
+            to="/import#how-to-export"
+            className="inline-flex min-h-11 items-center gap-1.5 text-sm font-medium text-muted-foreground underline underline-offset-4 hover:text-foreground"
+          >
+            <HelpCircle size={15} aria-hidden />
+            See how to export it
           </Link>
         </section>
 
-        <ul className="grid gap-3 sm:grid-cols-3">
-          {BENEFITS.map(({ Icon, title, body }) => (
-            <li key={title} className="rounded-xl border border-border bg-card p-4">
-              <Icon size={20} aria-hidden className="text-primary" />
-              <h2 className="mt-2 text-sm font-semibold">{title}</h2>
-              <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
-                {body}
-              </p>
+        {/* Compact privacy proof: three facts, one row. */}
+        <ul className="mx-auto flex flex-wrap items-center justify-center gap-x-8 gap-y-3">
+          {PRIVACY_FACTS.map(({ Icon, text }) => (
+            <li key={text} className="flex items-center gap-2 text-sm text-muted-foreground">
+              <Icon size={16} aria-hidden className="text-positive" />
+              {text}
             </li>
           ))}
         </ul>
-
-        <section className="rounded-xl border border-border bg-card p-5">
-          <h2 className="font-display text-lg font-semibold">
-            What you will need
-          </h2>
-          <ol className="mt-3 space-y-2 text-sm text-muted-foreground">
-            <li className="flex gap-2">
-              <span className="font-semibold text-foreground">1.</span>
-              Go to takeout.google.com and request only “Maps (your places)”.
-            </li>
-            <li className="flex gap-2">
-              <span className="font-semibold text-foreground">2.</span>
-              Unzip the archive when it is ready.
-            </li>
-            <li className="flex gap-2">
-              <span className="font-semibold text-foreground">3.</span>
-              Pick the Timeline JSON file — usually{" "}
-              <code className="rounded bg-muted px-1">
-                Location History (Timeline).json
-              </code>{" "}
-              or a file inside the <em>Timeline</em> folder.
-            </li>
-          </ol>
-        </section>
-
-        <footer className="flex flex-col items-center gap-3 pb-4 text-center">
-          <p className="inline-flex items-center gap-1.5 rounded-full border border-primary/40 bg-accent px-3 py-1.5 text-xs font-medium">
-            <ShieldCheck size={13} aria-hidden />
-            Your data stays in this browser — parsing and storage are local.
-          </p>
-          <Link
-            to="/settings"
-            className="text-xs text-muted-foreground underline underline-offset-2 hover:text-foreground"
-          >
-            Settings
-          </Link>
-        </footer>
       </div>
     </div>
   );

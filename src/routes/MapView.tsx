@@ -10,6 +10,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import {
   Dices,
+  Flame,
   List,
   MapPin,
   WifiOff,
@@ -35,14 +36,31 @@ import {
   yearColorMatch,
   yearOf,
 } from "@/features/map/visitsLayer";
+import {
+  buildDwellIndex,
+  sumRange,
+} from "@/features/heatmap/weights";
 import { visitsInMonth } from "@/features/dashboard/stats";
 import { cn } from "@/lib/cn";
 
 const VISITS_SOURCE = "visits";
 const CLUSTER_LAYER = "visit-clusters";
 const POINT_LAYER = "visit-points";
+const HEAT_SOURCE = "dwell-heat";
+const HEAT_LAYER = "dwell-heat-layer";
 
 const EMPTY_FC = { type: "FeatureCollection" as const, features: [] };
+
+const HEAT_COLORS: [number, string][] = [
+  [0, "#1e3a8a"],
+  [0.2, "#1d4ed8"],
+  [0.4, "#0891b2"],
+  [0.6, "#16a34a"],
+  [0.8, "#eab308"],
+  [1, "#dc2626"],
+];
+
+export type AtlasLayer = "places" | "heat";
 
 export default function MapView() {
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -68,7 +86,18 @@ export default function MapView() {
   const trips = useLiveQuery(() => getDb().trips.toArray(), [], [] as Trip[]);
   const [searchParams, setSearchParams] = useSearchParams();
   const monthFocus = searchParams.get("month");
+  // Dwell heat is an Atlas layer (#atlas-layers), not a separate product.
+  const layer: AtlasLayer = searchParams.get("layer") === "heat"
+    ? "heat"
+    : "places";
   const [mountedAtMs] = useState(() => Date.now());
+
+  function setLayer(next: AtlasLayer): void {
+    const params = new URLSearchParams(searchParams);
+    if (next === "heat") params.set("layer", "heat");
+    else params.delete("layer");
+    setSearchParams(params, { replace: true });
+  }
 
   const years = useMemo(
     () => [...new Set(visits.map(yearOf))].sort((a, b) => a - b),
@@ -127,6 +156,25 @@ export default function MapView() {
     [searchedVisits, monthVisitIds, mutedYears],
   );
 
+  // ---- Dwell-heat aggregation (shared index; reslicing is cheap) ----------
+  const dwellIndex = useMemo(
+    () =>
+      layer === "heat"
+        ? buildDwellIndex(visits, places, mountedAtMs)
+        : null,
+    [layer, visits, places, mountedAtMs],
+  );
+
+  const weightedPlaces = useMemo(() => {
+    if (!dwellIndex || dwellIndex.minYear === null || dwellIndex.maxYear === null) {
+      return [];
+    }
+    const from = Math.max(dwellIndex.minYear, mutedYears.size ? Math.min(...years.filter((y) => !mutedYears.has(y))) : dwellIndex.minYear);
+    const to = Math.min(dwellIndex.maxYear, mutedYears.size ? Math.max(...years.filter((y) => !mutedYears.has(y))) : dwellIndex.maxYear);
+    if (from > to) return [];
+    return sumRange(dwellIndex, from, to);
+  }, [dwellIndex, mutedYears, years]);
+
   useEffect(() => {
     if (!containerRef.current || mapRef.current) return;
     const map = new MaplibreMap({
@@ -176,7 +224,7 @@ export default function MapView() {
     // Basemap tiles are the one permitted network call; when they fail the
     // user must know their data is still there (#offline-state).
     map.on("error", (event) => {
-      const status = (event as { error?: { status?: number } }).error?.status;
+      const status = (event as { error?: { error?: number; status?: number } }).error?.status;
       if (status === undefined || status === 0 || status >= 400) {
         setTilesOffline(true);
       }
@@ -258,8 +306,47 @@ export default function MapView() {
     if (!map || styleVersion === 0) return;
 
     ensureVisitsLayers(map);
+    ensureHeatLayer(map);
+
     const source = map.getSource(VISITS_SOURCE) as GeoJSONSource;
-    source.setData(visitsToGeoJson(focusedVisits, placeIndex(places)));
+    source.setData(
+      layer === "places"
+        ? visitsToGeoJson(focusedVisits, placeIndex(places))
+        : EMPTY_FC,
+    );
+    const heatSource = map.getSource(HEAT_SOURCE) as GeoJSONSource;
+    const maxHours = Math.max(
+      1e-6,
+      ...weightedPlaces.map((w) => w.dwellMs / 3_600_000),
+    );
+    heatSource.setData({
+      type: "FeatureCollection" as const,
+      features:
+        layer === "heat"
+          ? weightedPlaces.map((entry) => ({
+              type: "Feature" as const,
+              properties: {
+                weight: entry.dwellMs / 3_600_000 / maxHours,
+              },
+              geometry: {
+                type: "Point" as const,
+                coordinates: [entry.place.lng, entry.place.lat],
+              },
+            }))
+          : [],
+    });
+
+    // Layer visibility is explicit on every data pass so a mid-session
+    // switch never leaves a stale layer showing.
+    for (const [layerId, visible] of [
+      [CLUSTER_LAYER, layer === "places"],
+      [POINT_LAYER, layer === "places"],
+      [HEAT_LAYER, layer === "heat"],
+    ] as const) {
+      if (map.getLayer(layerId)) {
+        map.setLayoutProperty(layerId, "visibility", visible ? "visible" : "none");
+      }
+    }
 
     const match = yearColorMatch(focusedVisits);
     if (match.length > 0) {
@@ -272,33 +359,38 @@ export default function MapView() {
       ] as unknown as ExpressionSpecification;
       map.setPaintProperty(POINT_LAYER, "circle-color", circleColor);
     }
-  }, [places, focusedVisits, styleVersion]);
+  }, [places, focusedVisits, weightedPlaces, layer, styleVersion]);
 
-  // Automatic framing: once per dataset, frame the visible history (#map-hero).
+  // Automatic framing: once per dataset+layer change, frame what is visible.
   useEffect(() => {
     const map = mapRef.current;
     if (!map || styleVersion === 0) return;
-    if (focusedVisits.length === 0) return;
-    const key = `${visits.length}|${monthFocus ?? ""}`;
+    const targets =
+      layer === "places"
+        ? focusedVisits
+            .map((v) => placeIndex(places).get(v.placeId))
+            .filter((p): p is Place => Boolean(p))
+        : weightedPlaces.map((w) => w.place);
+    if (targets.length === 0) return;
+    const key = `${visits.length}|${monthFocus ?? ""}|${layer}`;
     if (framedKeyRef.current === key) return;
     framedKeyRef.current = key;
 
-    const byId = placeIndex(places);
     let minLng = Infinity, maxLng = -Infinity, minLat = Infinity, maxLat = -Infinity;
-    for (const visit of focusedVisits) {
-      const place = byId.get(visit.placeId);
-      if (!place) continue;
+    for (const place of targets) {
       minLng = Math.min(minLng, place.lng); maxLng = Math.max(maxLng, place.lng);
       minLat = Math.min(minLat, place.lat); maxLat = Math.max(maxLat, place.lat);
     }
     if (minLng !== Infinity) {
       map.fitBounds([[minLng, minLat], [maxLng, maxLat]], {
         padding: 70,
-        duration: 600,
+        duration: window.matchMedia("(prefers-reduced-motion: reduce)").matches
+          ? 0
+          : 600,
         maxZoom: 12,
       });
     }
-  }, [focusedVisits, places, styleVersion, visits.length, monthFocus]);
+  }, [focusedVisits, places, weightedPlaces, layer, styleVersion, visits.length, monthFocus]);
 
   const selected = useMemo(() => {
     if (selectedVisitId === null) return {};
@@ -344,6 +436,9 @@ export default function MapView() {
     });
   }
 
+  const totalHeatHours =
+    weightedPlaces.reduce((sum, w) => sum + w.dwellMs, 0) / 3_600_000;
+
   const summary =
     visits.length > 0
       ? `${years.length} ${years.length === 1 ? "year" : "years"} · ${places.length} ${
@@ -357,7 +452,7 @@ export default function MapView() {
           .maplibregl-map rule would override a layered .absolute. */}
       <div ref={containerRef} className="h-full w-full" />
 
-      {selected.place && selected.visit && (
+      {selected.place && selected.visit && layer === "places" && (
         <VisitDetailCard
           place={selected.place}
           visit={selected.visit}
@@ -367,14 +462,14 @@ export default function MapView() {
         />
       )}
 
-      {/* Search + actions overlay */}
+      {/* Unified top-left toolbar: search, layer, list, surprise (#atlas). */}
       {visits.length > 0 && (
         <div className="absolute inset-x-3 top-3 z-10 flex items-start gap-2 sm:inset-x-auto sm:left-4 sm:right-auto">
-          <div className="relative min-w-0 flex-1 sm:w-64">
+          <div className="relative min-w-0 flex-1 sm:w-72">
             <MapPin
               size={14}
               aria-hidden
-              className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground"
+              className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground"
             />
             <input
               type="search"
@@ -409,7 +504,7 @@ export default function MapView() {
               role="combobox"
               aria-expanded={searchFocused && query.trim() !== ""}
               aria-controls="map-search-results"
-              className="h-11 w-full rounded-lg border border-border bg-card/95 pl-8 pr-8 text-sm shadow backdrop-blur placeholder:text-muted-foreground"
+              className="map-chrome h-11 w-full rounded-xl pl-9 pr-9 text-[15px] shadow-none placeholder:text-muted-foreground"
             />
             {query && (
               <button
@@ -433,11 +528,11 @@ export default function MapView() {
                 id="map-search-results"
                 data-testid="map-search-panel"
                 aria-label="Search results"
-                className="absolute left-0 right-0 top-[3.25rem] max-h-72 overflow-y-auto rounded-lg border border-border bg-card/95 p-1.5 text-sm shadow-lg backdrop-blur"
+                className="map-chrome absolute left-0 right-0 top-[3.25rem] max-h-72 overflow-y-auto rounded-xl p-2 text-sm shadow-none"
               >
                 {query.trim() === "" ? (
                   <div className="p-1">
-                    <p className="px-1 pb-1 text-[11px] uppercase tracking-wide text-muted-foreground">
+                    <p className="px-1 pb-1.5 text-xs font-medium text-muted-foreground">
                       Suggested years
                     </p>
                     <div className="flex flex-wrap gap-1.5">
@@ -447,7 +542,7 @@ export default function MapView() {
                           type="button"
                           onMouseDown={(e) => e.preventDefault()}
                           onClick={() => setQuery(String(y))}
-                          className="min-h-9 rounded-full border border-border px-3 py-1 text-xs tabular-nums hover:bg-muted"
+                          className="min-h-9 rounded-full border border-border px-3 py-1 text-sm tabular-nums hover:bg-muted"
                         >
                           {y}
                         </button>
@@ -455,13 +550,21 @@ export default function MapView() {
                     </div>
                   </div>
                 ) : searchMatches.length === 0 ? (
-                  <p role="status" data-testid="map-search-empty" className="p-3 text-xs text-muted-foreground">
-                    No matches for “{query.trim()}”. The map shows no pins for
-                    this filter — clear the search to bring everything back.
-                  </p>
+                  <div role="status" data-testid="map-search-empty" className="p-3 text-sm text-muted-foreground">
+                    No matches for “{query.trim()}”.
+                    <button
+                      type="button"
+                      onMouseDown={(e) => e.preventDefault()}
+                      onClick={() => setQuery("")}
+                      className="ml-1 font-medium text-primary underline underline-offset-2"
+                    >
+                      Clear the search
+                    </button>{" "}
+                    to bring every pin back.
+                  </div>
                 ) : (
                   <>
-                    <p role="status" className="px-2 py-1 text-[11px] text-muted-foreground">
+                    <p role="status" className="px-2 py-1 text-xs text-muted-foreground tabular">
                       {focusedVisits.length}{" "}
                       {focusedVisits.length === 1 ? "visit" : "visits"} in{" "}
                       {searchMatches.length}{" "}
@@ -481,13 +584,13 @@ export default function MapView() {
                             }}
                             onMouseEnter={() => setHighlighted(index)}
                             className={cn(
-                              "flex min-h-10 w-full items-center justify-between gap-2 rounded px-2 py-1.5 text-left",
+                              "flex min-h-11 w-full items-center justify-between gap-2 rounded-lg px-2 py-2 text-left",
                               index === highlighted ? "bg-accent" : "hover:bg-muted",
                             )}
                           >
-                            <span className="min-w-0 truncate">
+                            <span className="min-w-0 truncate text-[15px]">
                               {match.place.name || "Unnamed place"}
-                              <span className="block truncate text-xs text-muted-foreground">
+                              <span className="block truncate text-xs text-muted-foreground tabular">
                                 {match.count} {match.count === 1 ? "visit" : "visits"} ·{" "}
                                 {new Date(match.last).toLocaleDateString(undefined, {
                                   year: "numeric",
@@ -504,33 +607,104 @@ export default function MapView() {
               </div>
             )}
           </div>
+
+          {/* Layer segmented control: Places / Dwell heat (#atlas-layers). */}
+          <div
+            role="group"
+            aria-label="Map layer"
+            className="map-chrome flex shrink-0 items-center gap-0.5 rounded-xl p-1 shadow-none"
+          >
+            <button
+              type="button"
+              aria-pressed={layer === "places"}
+              onClick={() => setLayer("places")}
+              className={cn(
+                "flex min-h-9 items-center gap-1.5 rounded-lg px-2.5 text-xs font-medium transition-colors",
+                layer === "places"
+                  ? "bg-secondary text-secondary-foreground"
+                  : "text-muted-foreground hover:text-foreground",
+              )}
+            >
+              <MapPin size={14} aria-hidden />
+              Places
+            </button>
+            <button
+              type="button"
+              aria-pressed={layer === "heat"}
+              onClick={() => setLayer("heat")}
+              className={cn(
+                "flex min-h-9 items-center gap-1.5 rounded-lg px-2.5 text-xs font-medium transition-colors",
+                layer === "heat"
+                  ? "bg-secondary text-secondary-foreground"
+                  : "text-muted-foreground hover:text-foreground",
+              )}
+            >
+              <Flame size={14} aria-hidden />
+              Dwell heat
+            </button>
+          </div>
+
+          <button
+            type="button"
+            onClick={() => setShowListView((v) => !v)}
+            aria-expanded={showListView}
+            title="Toggle the place list"
+            aria-label="Toggle place list"
+            className={cn(
+              "map-chrome flex size-11 shrink-0 items-center justify-center rounded-xl text-muted-foreground shadow-none hover:text-foreground",
+              showListView && "text-foreground",
+            )}
+          >
+            <List size={17} aria-hidden />
+          </button>
           <button
             type="button"
             onClick={surpriseMe}
             title="Jump to a random memorable visit"
             aria-label="Surprise me: jump to a random visit"
-            className="flex size-11 shrink-0 items-center justify-center rounded-lg border border-border bg-card/95 text-muted-foreground shadow backdrop-blur hover:text-foreground"
+            className="map-chrome hidden size-11 shrink-0 items-center justify-center rounded-xl text-muted-foreground shadow-none hover:text-foreground sm:flex"
           >
             <Dices size={17} aria-hidden />
           </button>
-          <button
-            type="button"
-            onClick={() => setShowListView((v) => !v)}
-            aria-expanded={showListView}
-            title="Toggle place list (no-map browsing)"
-            aria-label="Toggle place list"
-            className="flex size-11 shrink-0 items-center justify-center rounded-lg border border-border bg-card/95 text-muted-foreground shadow backdrop-blur hover:text-foreground"
-          >
-            <List size={17} aria-hidden />
-          </button>
         </div>
+      )}
+
+      {/* Heat legend beside the map while the dwell layer is active. */}
+      {layer === "heat" && visits.length > 0 && (
+        <div className="map-chrome absolute bottom-20 left-3 z-10 flex items-center gap-2 rounded-full px-3 py-1.5 shadow-none sm:bottom-6 sm:left-4">
+          <span className="text-xs font-medium text-muted-foreground">Fewer hours</span>
+          <span
+            aria-hidden
+            className="h-2.5 w-24 rounded-full sm:w-36"
+            style={{
+              background:
+                "linear-gradient(to right, #1e3a8a, #1d4ed8, #0891b2, #16a34a, #eab308, #dc2626)",
+            }}
+          />
+          <span className="text-xs font-medium text-muted-foreground">More hours</span>
+          <span className="sr-only">
+            Glow intensity shows total hours spent at each place.
+          </span>
+        </div>
+      )}
+
+      {layer === "heat" && visits.length > 0 && totalHeatHours > 0 && (
+        <p
+          role="status"
+          data-testid="atlas-heat-summary"
+          className="map-chrome absolute left-1/2 top-16 z-[5] hidden -translate-x-1/2 whitespace-nowrap rounded-full px-3 py-1 text-xs text-muted-foreground shadow-none sm:block tabular"
+        >
+          {Math.round(totalHeatHours).toLocaleString()} hours across{" "}
+          {weightedPlaces.length} {weightedPlaces.length === 1 ? "place" : "places"} ·{" "}
+          {[...years.filter((y) => !mutedYears.has(y))].join(", ") || "no years"}
+        </p>
       )}
 
       {/* Non-map alternative: browse places without touching the canvas. */}
       {showListView && visits.length > 0 && (
         <aside
           aria-label="Your places as a list"
-          className="absolute bottom-24 left-3 right-3 top-32 z-10 overflow-y-auto rounded-lg border border-border bg-card/95 p-3 shadow-lg backdrop-blur sm:left-4 sm:right-auto sm:w-96"
+          className="map-chrome absolute bottom-24 left-3 right-3 top-32 z-10 overflow-y-auto rounded-xl p-3 shadow-none sm:bottom-16 sm:left-4 sm:right-auto sm:w-96"
         >
           <PlaceList
             visits={focusedVisits}
@@ -540,8 +714,8 @@ export default function MapView() {
         </aside>
       )}
 
-      {summary && !monthFocus && mutedYears.size === 0 && !query && (
-        <p className="absolute left-1/2 top-16 z-[5] hidden -translate-x-1/2 whitespace-nowrap rounded-full bg-card/90 px-3 py-1 text-xs tabular-nums text-muted-foreground shadow backdrop-blur sm:block">
+      {summary && layer === "places" && !monthFocus && mutedYears.size === 0 && !query && (
+        <p className="map-chrome absolute left-1/2 top-16 z-[5] hidden -translate-x-1/2 whitespace-nowrap rounded-full px-3 py-1 text-xs text-muted-foreground shadow-none sm:block tabular">
           {summary}
         </p>
       )}
@@ -552,7 +726,7 @@ export default function MapView() {
           <div
             role="group"
             aria-label="Filter by year"
-            className="flex max-w-full items-center gap-1.5 overflow-x-auto rounded-xl border border-border bg-card/95 p-2 shadow backdrop-blur"
+            className="map-chrome flex max-w-full items-center gap-1.5 overflow-x-auto rounded-xl p-2 shadow-none"
           >
             {years.map((y) => {
               const active = !mutedYears.has(y);
@@ -596,26 +770,26 @@ export default function MapView() {
       )}
 
       {visits.length === 0 && (
-        <div className="absolute inset-x-0 top-1/2 z-10 mx-auto w-fit -translate-y-1/2 rounded-lg border border-border bg-card px-6 py-4 text-center shadow">
-          <p className="font-display text-base font-semibold">No visits yet</p>
-          <p className="mt-1 text-sm text-muted-foreground">
-            Import your Google Timeline to see your history here.{" "}
+        <div className="absolute inset-x-0 top-1/2 z-10 mx-auto w-fit -translate-y-1/2 rounded-xl border border-border bg-card px-8 py-6 text-center shadow-low">
+          <p className="font-display text-lg font-semibold">Your atlas awaits</p>
+          <p className="mt-1 max-w-xs text-sm text-muted-foreground">
+            Choose your timeline file to see your history here.{" "}
             <Link to="/import" className="text-primary underline">
-              Import now
+              Import
             </Link>
           </p>
         </div>
       )}
 
       {monthFocus && (
-        <div className="absolute left-1/2 top-16 z-10 flex -translate-x-1/2 items-center gap-2 whitespace-nowrap rounded-md bg-card px-3 py-1.5 text-xs shadow">
+        <div className="map-chrome absolute left-1/2 top-16 z-10 flex -translate-x-1/2 items-center gap-2 whitespace-nowrap rounded-full px-3 py-1.5 text-xs shadow-none tabular">
           <span>
             Showing <strong>{monthFocus}</strong> · {focusedVisits.length}{" "}
             {focusedVisits.length === 1 ? "visit" : "visits"}
           </span>
           <button
             type="button"
-            className="rounded border border-border px-1.5 py-0.5 hover:bg-muted"
+            className="rounded-md border border-border px-1.5 py-0.5 hover:bg-muted"
             onClick={() => setSearchParams({})}
           >
             Clear
@@ -626,17 +800,22 @@ export default function MapView() {
       {tilesOffline && (
         <div
           role="status"
-          className="absolute inset-x-3 bottom-20 z-10 mx-auto flex w-fit items-center gap-2 rounded-md border border-border bg-card px-3 py-2 text-xs shadow sm:bottom-16"
+          data-testid="offline-banner"
+          className="map-chrome absolute inset-x-3 bottom-20 z-10 mx-auto flex w-fit items-center gap-2 rounded-xl px-3 py-2 text-xs shadow-none sm:bottom-16"
         >
           <WifiOff size={14} aria-hidden className="shrink-0 text-primary" />
-          <span>
-            Map tiles could not load — you may be offline. Your visits and
-            details are unaffected.
-          </span>
+          <span>Map tiles are unavailable. Your saved places are still here.</span>
+          <button
+            type="button"
+            onClick={() => setShowListView(true)}
+            className="font-medium text-primary underline underline-offset-2"
+          >
+            Open list
+          </button>
           <button
             type="button"
             aria-label="Dismiss offline notice"
-            className="ml-1 flex size-7 items-center justify-center rounded hover:bg-muted"
+            className="flex size-7 items-center justify-center rounded hover:bg-muted"
             onClick={() => setTilesOffline(false)}
           >
             <X size={12} aria-hidden />
@@ -697,7 +876,7 @@ function PlaceList({
               <span className="block truncate text-sm font-medium">
                 {place.name || "Unnamed place"}
               </span>
-              <span className="block truncate text-xs text-muted-foreground">
+              <span className="block truncate text-xs text-muted-foreground tabular">
                 {count} {count === 1 ? "visit" : "visits"} ·{" "}
                 {new Date(last).toLocaleDateString(undefined, {
                   year: "numeric",
@@ -757,6 +936,30 @@ function ensureVisitsLayers(map: MaplibreMap): void {
         "circle-radius": 6,
         "circle-stroke-width": 1.5,
         "circle-stroke-color": "#ffffffcc",
+      },
+    });
+  }
+}
+
+function ensureHeatLayer(map: MaplibreMap): void {
+  if (!map.getSource(HEAT_SOURCE)) {
+    map.addSource(HEAT_SOURCE, { type: "geojson", data: EMPTY_FC });
+    map.addLayer({
+      id: HEAT_LAYER,
+      type: "heatmap",
+      source: HEAT_SOURCE,
+      layout: { visibility: "none" },
+      paint: {
+        "heatmap-weight": ["interpolate", ["linear"], ["get", "weight"], 0, 0, 1, 1],
+        "heatmap-intensity": 0.9,
+        "heatmap-radius": 42,
+        "heatmap-opacity": 0.85,
+        "heatmap-color": [
+          "interpolate",
+          ["linear"],
+          ["heatmap-density"],
+          ...HEAT_COLORS.flat(),
+        ],
       },
     });
   }
