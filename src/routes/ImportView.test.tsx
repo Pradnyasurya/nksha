@@ -67,7 +67,8 @@ describe("ImportView ceremony (#import-ceremony)", () => {
     const input = dropzone.querySelector('input[type="file"]');
     expect(input?.getAttribute("aria-label")).toMatch(/Timeline export/);
     // Supported-format guidance is visible without interaction.
-    expect(screen.getByText(/\.json up to roughly/)).toBeTruthy();
+    expect(screen.getByText(/choose a file/)).toBeTruthy();
+    expect(document.querySelector('[data-testid="dropzone"]')!.textContent).toMatch(/\.json/);
   });
 
   it("announces parsing stages while working", () => {
@@ -109,7 +110,7 @@ describe("ImportView ceremony (#import-ceremony)", () => {
     expect(document.querySelector("[data-testid='import-report'] summary")!.textContent).toContain(
       "skipped",
     );
-    expect(screen.getByRole("button", { name: /Save local report/ })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /Download import report/ })).toBeTruthy();
   });
 
   it("warns loudly only when the file itself contains no visits", () => {

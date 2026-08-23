@@ -8,6 +8,7 @@ import {
   HelpCircle,
   Loader2,
   RefreshCw,
+  ShieldCheck,
   Upload,
 } from "lucide-react";
 import {
@@ -63,22 +64,23 @@ export default function ImportView() {
   }
 
   return (
-    <div className="mx-auto min-w-0 max-w-2xl space-y-5 overflow-y-auto p-4 sm:p-6">
+    <div className="mx-auto min-w-0 max-w-2xl space-y-6 overflow-y-auto p-4 sm:p-6">
       <header>
-        <h1 className="text-2xl font-semibold">Import your timeline</h1>
+        <h1 className="page-title">Import</h1>
         <p className="mt-1 text-sm text-muted-foreground">
           One file in, one private atlas out. Parsing happens entirely in your
           browser — the file never leaves this device.
         </p>
       </header>
 
-      {/* The dropzone is a real <button>: focusable, Enter/Space activatable. */}
+      {/* Step 1: choose file. The dropzone is a real <button>: focusable,
+          Enter/Space activatable. */}
       <section
         data-testid="dropzone"
         className={cn(
-          "rounded-xl border-2 border-dashed transition-all duration-150",
+          "rounded-card border-2 border-dashed transition-all duration-150",
           dragging
-            ? "scale-[1.01] border-primary bg-accent shadow-md"
+            ? "border-primary bg-accent shadow-low"
             : "border-border",
           working && "opacity-70",
         )}
@@ -122,16 +124,19 @@ export default function ImportView() {
 
           {state.phase === "working" ? (
             <>
-              <p className="text-sm font-medium" aria-live="polite">
+              <p className="text-[15px] font-medium" aria-live="polite">
                 {stageLabel(state.stage)}…
               </p>
-              <p className="max-w-xs truncate text-xs text-muted-foreground">
+              <p className="max-w-xs truncate text-sm text-muted-foreground">
                 {state.fileName}
+              </p>
+              <p className="text-xs text-muted-foreground">
+                Keep this tab open — large files can take a minute or two.
               </p>
             </>
           ) : (
             <>
-              <span className="text-sm font-medium">
+              <span className="text-[15px] font-medium">
                 Drop your Google Maps Timeline export here
               </span>
               <span className="text-sm text-muted-foreground">
@@ -139,35 +144,43 @@ export default function ImportView() {
                 <span className="font-medium text-primary underline underline-offset-2">
                   choose a file
                 </span>{" "}
-                — .json up to roughly a few hundred MB
+                — .json
               </span>
             </>
           )}
         </button>
       </section>
 
+      <p className="flex items-center gap-2 text-sm text-muted-foreground">
+        <ShieldCheck size={15} aria-hidden className="text-positive" />
+        Your file is parsed here and stored in this browser — nothing is
+        uploaded.
+      </p>
+
       {state.phase === "error" && (
         <section
           role="alert"
           aria-live="assertive"
           data-testid="import-error"
-          className="rounded-lg border border-destructive/40 bg-card p-4"
+          className="rounded-card border border-destructive/40 bg-card p-5"
         >
-          <p className="flex items-center gap-2 text-sm font-medium">
+          <p className="flex items-center gap-2 text-[15px] font-medium">
             <AlertTriangle size={15} aria-hidden className="text-destructive" />
             Could not import {state.fileName}
           </p>
-          <p className="mt-1.5 text-sm text-muted-foreground">{state.message}</p>
+          <p className="mt-1.5 text-sm text-muted-foreground">
+            {state.message} Your existing data was not changed.
+          </p>
           <div className="mt-3 flex flex-wrap gap-2">
             <button
               type="button"
               onClick={pickFile}
-              className="flex min-h-11 items-center gap-1.5 rounded-md bg-primary px-3 py-2 text-sm font-medium text-primary-foreground hover:opacity-90"
+              className="flex min-h-11 items-center gap-1.5 rounded-lg bg-primary px-3 py-2 text-sm font-medium text-primary-foreground hover:opacity-90"
             >
               <RefreshCw size={14} aria-hidden /> Try another file
             </button>
             <details className="min-h-11">
-              <summary className="flex min-h-11 cursor-pointer items-center gap-1.5 rounded-md border border-border px-3 py-2 text-sm hover:bg-muted">
+              <summary className="flex min-h-11 cursor-pointer items-center gap-1.5 rounded-lg border border-border px-3 py-2 text-sm hover:bg-muted">
                 <HelpCircle size={14} aria-hidden /> What file should I use?
               </summary>
               <p className="mt-2 px-1 text-sm text-muted-foreground">
@@ -184,26 +197,27 @@ export default function ImportView() {
         </section>
       )}
 
+      {/* Step 3: the outcome leads with what changed. */}
       {report && (
         <section
           data-testid="import-report"
           aria-live="polite"
-          className="rounded-lg border border-border bg-card p-4"
+          className="rounded-card border border-border bg-card p-5"
         >
-          <p className="flex items-center gap-2 text-base font-semibold">
-            <CheckCircle2 size={17} aria-hidden className="text-primary" />
+          <p className="flex items-center gap-2 font-display text-lg font-semibold">
+            <CheckCircle2 size={18} aria-hidden className="text-positive" />
             {state.phase === "done" ? `${state.fileName} imported` : ""}
           </p>
 
           {report.visitsInFile === 0 && (
             <p
               role="alert"
-              className="mt-3 flex items-start gap-2 rounded-md bg-accent p-3 text-sm"
+              className="mt-3 flex items-start gap-2 rounded-xl bg-accent p-3 text-sm"
             >
               <AlertTriangle size={15} aria-hidden className="mt-0.5 shrink-0 text-primary" />
               No visits came out of this file. It may contain only travel
               entries, or history too recent for Timeline to have processed.
-              Your map will stay empty until an import produces visits.
+              Your atlas will stay empty until an import produces visits.
             </p>
           )}
 
@@ -211,16 +225,16 @@ export default function ImportView() {
             <p
               role="status"
               data-testid="duplicate-import-note"
-              className="mt-3 flex items-start gap-2 rounded-md bg-muted p-3 text-sm"
+              className="mt-3 flex items-start gap-2 rounded-xl bg-muted p-3 text-sm"
             >
-              <CheckCircle2 size={15} aria-hidden className="mt-0.5 shrink-0 text-primary" />
+              <CheckCircle2 size={15} aria-hidden className="mt-0.5 shrink-0 text-positive" />
               All {report.visitsSkipped || report.visitsInFile} visits were
               already in your atlas. Nothing was changed.
             </p>
           )}
 
           {report.overlappingExisting > 0 && (
-            <p className="mt-3 rounded-md bg-muted p-3 text-sm text-muted-foreground">
+            <p className="mt-3 rounded-xl bg-muted p-3 text-sm text-muted-foreground">
               Merged with existing data: {report.overlappingExisting} visit
               {report.overlappingExisting === 1 ? "" : "s"} already covered this
               date range. Duplicates were skipped — nothing was overwritten or
@@ -228,35 +242,35 @@ export default function ImportView() {
             </p>
           )}
 
-          <dl className="mt-3 grid grid-cols-2 gap-x-6 gap-y-2 text-sm sm:grid-cols-3">
+          <dl className="mt-4 grid grid-cols-2 gap-x-6 gap-y-3 text-[15px] sm:grid-cols-3">
             <div>
               <dt className="text-xs text-muted-foreground">Date range</dt>
-              <dd className="tabular-nums">
+              <dd className="tabular">
                 {formatDay(report.firstVisitTimeMs)} –{" "}
                 {formatDay(report.lastVisitTimeMs)}
               </dd>
             </div>
             <div>
-              <dt className="text-xs text-muted-foreground">Visits created</dt>
-              <dd className="tabular-nums">{report.visitsCreated}</dd>
+              <dt className="text-xs text-muted-foreground">Visits added</dt>
+              <dd className="tabular">{report.visitsCreated}</dd>
             </div>
             <div>
               <dt className="text-xs text-muted-foreground">Places found</dt>
-              <dd className="tabular-nums">{report.placesFound}</dd>
+              <dd className="tabular">{report.placesFound}</dd>
             </div>
             <div>
               <dt className="text-xs text-muted-foreground">Movements</dt>
-              <dd className="tabular-nums">{report.movementsCreated}</dd>
+              <dd className="tabular">{report.movementsCreated}</dd>
             </div>
             <div>
               <dt className="text-xs text-muted-foreground">
-                Trips suggested
+                Stories suggested
               </dt>
-              <dd className="tabular-nums">{report.tripsInferred}</dd>
+              <dd className="tabular">{report.tripsInferred}</dd>
             </div>
             <div>
               <dt className="text-xs text-muted-foreground">Skipped entries</dt>
-              <dd className="tabular-nums">
+              <dd className="tabular">
                 {report.skippedSegments}
                 {report.visitsSkipped > 0 &&
                   ` (+${report.visitsSkipped} duplicate${report.visitsSkipped === 1 ? "" : "s"})`}
@@ -265,7 +279,7 @@ export default function ImportView() {
           </dl>
 
           {report.skippedSegments > 0 && (
-            <details className="mt-3 text-xs text-muted-foreground">
+            <details className="mt-3 text-sm text-muted-foreground">
               <summary className="cursor-pointer">
                 Why were {report.skippedSegments} segment
                 {report.skippedSegments === 1 ? "" : "s"} skipped?
@@ -282,35 +296,34 @@ export default function ImportView() {
             </details>
           )}
 
-          <div className="mt-4 flex flex-wrap gap-2">
-            <Link to="/">
-              <button
-                type="button"
-                className="min-h-11 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:opacity-90"
-              >
-                View your map
-              </button>
+          <div className="mt-5 flex flex-wrap gap-2">
+            <Link
+              to="/"
+              className="flex min-h-12 items-center rounded-xl bg-primary px-5 py-2.5 text-[15px] font-medium text-primary-foreground hover:opacity-90"
+            >
+              Open my atlas
             </Link>
-            <Link to="/dashboard">
-              <button
-                type="button"
-                className="min-h-11 rounded-md border border-border px-4 py-2 text-sm hover:bg-muted"
-              >
-                Open insights
-              </button>
+            <Link
+              to="/dashboard"
+              className="flex min-h-12 items-center rounded-xl border border-border px-4 py-2.5 text-sm hover:bg-muted"
+            >
+              Preview insights
             </Link>
             <button
               type="button"
               onClick={downloadDiagnostics}
-              className="flex min-h-11 items-center gap-1.5 rounded-md border border-border px-4 py-2 text-sm hover:bg-muted"
+              className="flex min-h-12 items-center gap-1.5 rounded-xl border border-border px-4 py-2.5 text-sm hover:bg-muted"
             >
-              <Download size={14} aria-hidden /> Save local report
+              <Download size={14} aria-hidden /> Download import report
             </button>
           </div>
         </section>
       )}
 
-      <details className="rounded-lg border border-border bg-card p-4 text-sm">
+      <details
+        id="how-to-export"
+        className="rounded-card border border-border bg-card p-5 text-sm"
+      >
         <summary className="flex cursor-pointer items-center gap-2 font-medium">
           <HelpCircle size={15} aria-hidden /> Which export works?
         </summary>

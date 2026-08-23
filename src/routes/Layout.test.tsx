@@ -18,7 +18,6 @@ function renderLayout(initialPath = "/") {
           <Route path="import" element={<p data-testid="stub">import</p>} />
           <Route path="trips" element={<p data-testid="stub">trips</p>} />
           <Route path="playback" element={<p data-testid="stub">playback</p>} />
-          <Route path="heatmap" element={<p data-testid="stub">heatmap</p>} />
           <Route path="dashboard" element={<p data-testid="stub">dashboard</p>} />
           <Route path="settings" element={<p data-testid="stub">settings</p>} />
         </Route>
@@ -70,19 +69,20 @@ describe("Layout — mobile overflow guards (#P0)", () => {
     expect(css).toMatch(/#root\s*\{[^}]*min-width:\s*0/s);
   });
 
-  it("mobile uses a bottom tab bar with the four main destinations", async () => {
+  it("mobile uses a bottom tab bar with exactly three destinations", async () => {
     const db = openTestDb("layout-tabs");
     await seedOneVisit(db);
     renderLayout();
-    // Bottom nav is the nav that is NOT inside the header.
+    // Bottom nav is the nav that carries border-t (mobile bottom bar).
     await waitFor(() => {
-      expect(document.querySelector("main nav, nav.border-t")).toBeTruthy();
+      expect(document.querySelector("nav.border-t")).toBeTruthy();
     });
     const bottomNav = document.querySelector("nav.border-t")!;
     const labels = [...bottomNav.querySelectorAll("a")].map((a) =>
       a.textContent?.trim(),
     );
-    expect(labels).toEqual(["Map", "Story", "Insights", "Trips"]);
+    // Three primary destinations only — utilities live in the More sheet.
+    expect(labels).toEqual(["Atlas", "Stories", "Insights"]);
     // Touch targets: every tab is at least 44 px tall.
     for (const tab of bottomNav.querySelectorAll("a")) {
       expect(tab.className).toMatch(/min-h-14/);
@@ -99,14 +99,14 @@ describe("Layout — mobile overflow guards (#P0)", () => {
       ).toBeTruthy();
     });
     const active = document.querySelector('nav.border-t a[aria-current="page"]')!;
-    expect(active.textContent).toContain("Trips");
+    expect(active.textContent).toContain("Stories");
   });
 
-  it("keeps Import, Heatmap and Settings behind the mobile menu", async () => {
+  it("keeps Import and Settings in the mobile More sheet", async () => {
     const db = openTestDb("layout-menu");
     await seedOneVisit(db);
     renderLayout();
-    const menuButton = await screen.findByRole("button", { name: "Open menu" });
+    const menuButton = await screen.findByRole("button", { name: "More options" });
     // Closed: no secondary links visible.
     expect(screen.queryByRole("navigation", { name: "Secondary" })).toBeNull();
     fireEvent.click(menuButton);
@@ -114,7 +114,7 @@ describe("Layout — mobile overflow guards (#P0)", () => {
     const labels = [...secondary.querySelectorAll("a")].map((a) =>
       a.textContent?.trim(),
     );
-    expect(labels).toEqual(["Heatmap", "Import", "Settings"]);
+    expect(labels).toEqual(["Import", "Settings"]);
     expect(menuButton.getAttribute("aria-expanded")).toBe("true");
   });
 
@@ -128,6 +128,27 @@ describe("Layout — mobile overflow guards (#P0)", () => {
   });
 });
 
+describe("Layout — desktop rail", () => {
+  afterEach(() => cleanup());
+
+  it("shows Atlas, Stories, Insights plus Import/Settings utilities", async () => {
+    const db = openTestDb("layout-rail");
+    await seedOneVisit(db);
+    renderLayout();
+    const rail = await waitFor(() => {
+      const el = document.querySelector('nav[aria-label="Primary"]');
+      if (!el) throw new Error("rail not mounted yet");
+      return el;
+    });
+    const text = rail.textContent ?? "";
+    for (const label of ["Atlas", "Stories", "Insights", "Import", "Settings"]) {
+      expect(text).toContain(label);
+    }
+    // The local-data status must not imply cloud sync.
+    expect(rail.textContent).toMatch(/Stored in this browser/);
+  });
+});
+
 describe("Layout — first-run gating (#first-run)", () => {
   afterEach(() => {
     cleanup();
@@ -137,19 +158,18 @@ describe("Layout — first-run gating (#first-run)", () => {
     openTestDb("layout-first-run");
     renderLayout();
     expect(
-      await screen.findByText("Your life, mapped privately."),
+      await screen.findByText("Your travels, kept close."),
     ).toBeTruthy();
-    // No navigation chrome until data exists (the welcome's own <header>
-    // is inside <main> and carries no border-b class).
+    // No navigation chrome until data exists.
     await waitFor(() => {
       expect(document.querySelector("header.border-b")).toBeNull();
       expect(document.querySelector("nav")).toBeNull();
     });
     // One clear action.
-    const cta = screen.getByText("Import your timeline").closest("a");
+    const cta = screen.getByText("Choose timeline file").closest("a");
     expect(cta?.getAttribute("href")).toBe("/import");
-    // Trust badge.
-    expect(screen.getByText(/Your data stays in this browser/)).toBeTruthy();
+    // Trust facts.
+    expect(screen.getByText(/Parsed in this browser/)).toBeTruthy();
   });
 
   it("reveals the full app once visits exist", async () => {
@@ -158,9 +178,9 @@ describe("Layout — first-run gating (#first-run)", () => {
     renderLayout();
     await screen.findByTestId("stub");
     await waitFor(() => {
-      expect(document.querySelector("header.border-b")).toBeTruthy();
+      expect(document.querySelector("nav[aria-label='Primary']")).toBeTruthy();
     });
-    expect(screen.queryByText("Your life, mapped privately.")).toBeNull();
+    expect(screen.queryByText("Your travels, kept close.")).toBeNull();
   });
 
   it("never flashes the welcome screen before the database answers", () => {
@@ -170,11 +190,11 @@ describe("Layout — first-run gating (#first-run)", () => {
     const { container } = renderLayout();
     // visitCount is undefined on the very first render: shell renders without
     // welcome content and without nav chrome.
-    expect(container.textContent).not.toContain("Your life, mapped privately.");
+    expect(container.textContent).not.toContain("Your travels, kept close.");
     expect(container.querySelector("nav")).toBeNull();
   });
 
-  it("lets a first-run user click Import your timeline and reach the file picker (#first-run)", async () => {
+  it("lets a first-run user click Choose timeline file and reach the file picker (#first-run)", async () => {
     openTestDb("layout-first-run-cta");
     render(
       <MemoryRouter initialEntries={["/"]}>
@@ -188,7 +208,7 @@ describe("Layout — first-run gating (#first-run)", () => {
     );
     // Welcome owns "/" on an empty database…
     expect(
-      await screen.findByText("Your life, mapped privately."),
+      await screen.findByText("Your travels, kept close."),
     ).toBeTruthy();
     cleanup();
 
@@ -206,7 +226,7 @@ describe("Layout — first-run gating (#first-run)", () => {
     expect(
       await screen.findByText("Drop your Google Maps Timeline export here"),
     ).toBeTruthy();
-    expect(screen.queryByText("Your life, mapped privately.")).toBeNull();
+    expect(screen.queryByText("Your travels, kept close.")).toBeNull();
     // The importer's real file input is reachable in this state.
     expect(
       document.querySelector('input[type="file"][accept*="json"]'),
@@ -217,6 +237,6 @@ describe("Layout — first-run gating (#first-run)", () => {
     openTestDb("layout-first-run-settings");
     renderLayout("/settings");
     expect(await screen.findByTestId("stub")).toBeTruthy();
-    expect(screen.queryByText("Your life, mapped privately.")).toBeNull();
+    expect(screen.queryByText("Your travels, kept close.")).toBeNull();
   });
 });

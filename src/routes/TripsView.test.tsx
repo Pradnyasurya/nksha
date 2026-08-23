@@ -12,7 +12,7 @@ function renderView() {
   );
 }
 
-describe("TripsView (#trips-ux)", () => {
+describe("TripsView — Stories (#stories)", () => {
   afterEach(() => cleanup());
 
   it("says Create trip and never mentions a nonexistent brush", async () => {
@@ -24,15 +24,22 @@ describe("TripsView (#trips-ux)", () => {
     await disposeTestDb(db);
   });
 
-  it("stacks the form fields below the small breakpoint", async () => {
+  it("opens a focused create form on demand with stacking date fields", async () => {
     const db = openTestDb("trips-stack");
     renderView();
-    // The date/action group is flex-col first, row only at sm+ — this is the
-    // fix for the fixed-width horizontal group that overflowed at 390 px.
-    await waitFor(() => {
-      expect(document.querySelector("form .flex-col.sm\\:flex-row")).toBeTruthy();
+    expect(await screen.findByText("Create trip")).toBeTruthy();
+    // The form is closed until the user asks for it (#stories).
+    expect(document.querySelector("form")).toBeNull();
+    screen.getByRole("button", { name: "Create trip" }).click();
+    const form = await waitFor(() => {
+      const el = document.querySelector("form");
+      if (!el) throw new Error("form not open yet");
+      return el;
     });
-    for (const input of document.querySelectorAll<HTMLInputElement>(
+    // The date/action group is flex-col first, row only at sm+ — no fixed
+    // widths so nothing overflows at 390 px.
+    expect(form.querySelector(".flex-col.sm\\:flex-row")).toBeTruthy();
+    for (const input of form.querySelectorAll<HTMLInputElement>(
       'input[type="date"]',
     )) {
       expect(input.className).toMatch(/h-11/);
@@ -41,16 +48,16 @@ describe("TripsView (#trips-ux)", () => {
     await disposeTestDb(db);
   });
 
-  it("disables Re-run suggestions until prerequisites exist, then offers it", async () => {
+  it("hides suggestions until prerequisites exist, then embeds the Home picker", async () => {
     const empty = openTestDb("trips-novisits");
     renderView();
     await screen.findByText("Create trip");
-    // The button stays visible but disabled, and explains what is missing
-    // (#trips-onboarding) — a silent no-op button helps nobody.
-    const rerun = await screen.findByRole("button", { name: /Re-run suggestions/ });
-    expect((rerun as HTMLButtonElement).disabled).toBe(true);
-    expect(rerun.getAttribute("title")).toMatch(/Import your timeline first/i);
-    expect(document.body.textContent).toMatch(/declared Home|Choose Home/i);
+    // Without visits the setup card points at Import; there is no silent
+    // suggestion button that could never do anything.
+    expect(document.body.textContent).toMatch(/choose a timeline file/i);
+    expect(
+      screen.queryByRole("button", { name: /Find trips again/ }),
+    ).toBeNull();
     cleanup();
 
     await empty.places.put({
@@ -71,10 +78,9 @@ describe("TripsView (#trips-ux)", () => {
       createdAt: 0,
     });
     renderView();
-    // Visits exist but Home is not chosen: still disabled, now offering Choose Home.
-    const rerun2 = await screen.findByRole("button", { name: /Re-run suggestions/ });
-    expect((rerun2 as HTMLButtonElement).disabled).toBe(true);
+    // Visits exist but Home is not chosen: the searchable picker is embedded.
     expect(await screen.findByTestId("choose-home")).toBeTruthy();
+    expect(document.body.textContent).toMatch(/declared Home|Choose Home/i);
     await disposeTestDb(empty);
   });
 
@@ -111,25 +117,41 @@ describe("TripsView (#trips-ux)", () => {
       },
     ]);
     renderView();
-    await screen.findByText("Create trip");
-    // The preview copy exists and explains itself once dates are chosen.
-    expect(document.body.textContent).toMatch(/Every visit inside the window/);
+    screen.getByRole("button", { name: "Create trip" }).click();
+    await waitFor(() => document.querySelector("form"));
+    // The preview copy exists and explains itself.
+    expect(document.body.textContent).toMatch(/Overlapping windows are rejected/);
     await disposeTestDb(db);
   });
 
-  it("explains what auto-suggested means on trip cards", async () => {
+  it("groups suggested trips apart from created ones with distinct actions", async () => {
     const db = openTestDb("trips-provenance");
-    await db.trips.put({
-      id: "t1",
-      name: "Hills",
-      startDay: "2026-01-02",
-      endDay: "2026-01-09",
-      provenance: "inferred",
-      createdAt: 0,
-    });
+    await db.trips.bulkPut([
+      {
+        id: "t1",
+        name: "Hills",
+        startDay: "2026-01-02",
+        endDay: "2026-01-09",
+        provenance: "inferred",
+        createdAt: 0,
+      },
+      {
+        id: "t2",
+        name: "Coast",
+        startDay: "2026-02-02",
+        endDay: "2026-02-05",
+        provenance: "declared",
+        createdAt: 0,
+      },
+    ]);
     renderView();
-    const badge = await screen.findByText("auto-suggested");
-    expect(badge.getAttribute("title")).toMatch(/Suggested automatically/);
+    expect(await screen.findByText("Suggested")).toBeTruthy();
+    expect(screen.getByText("Created by you")).toBeTruthy();
+    // A suggested Trip dismisses (the suggestion), not deletes.
+    const dismiss = screen.getByRole("button", { name: "Dismiss Hills" });
+    expect(dismiss.getAttribute("title")).toMatch(/suggested automatically/i);
+    // A created Trip deletes (the trip itself).
+    expect(screen.getByRole("button", { name: "Delete Coast" })).toBeTruthy();
     expect(document.body.textContent).toMatch(/8 days/);
     await disposeTestDb(db);
   });

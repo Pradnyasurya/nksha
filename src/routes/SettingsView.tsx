@@ -16,10 +16,11 @@ import {
   type RestoreOutcome,
 } from "@/features/archive/archive";
 import { isValidStyleUrl } from "@/features/map/mapStyles";
+import { cn } from "@/lib/cn";
 
-const STYLE_OPTIONS: { value: BasemapStyle; label: string }[] = [
-  { value: "dark", label: "Dark" },
-  { value: "light", label: "Light" },
+const STYLE_OPTIONS: { value: BasemapStyle; label: string; hint: string }[] = [
+  { value: "dark", label: "Midnight atlas", hint: "Deep blue water and ink roads" },
+  { value: "light", label: "Warm paper", hint: "Parchment tones, quiet detail" },
 ];
 
 export default function SettingsView() {
@@ -38,6 +39,7 @@ export default function SettingsView() {
   const [draftStyle, setDraftStyle] = useState<BasemapStyle | null>(null);
   const [draftUrl, setDraftUrl] = useState<string | null>(null);
   const [savedAt, setSavedAt] = useState<number | null>(null);
+  const [advancedOpen, setAdvancedOpen] = useState(false);
 
   const effectiveStyle = draftStyle ?? style;
   const effectiveUrl = draftUrl ?? storedUrl;
@@ -49,7 +51,7 @@ export default function SettingsView() {
   // inline instead of letting the map fail later (#settings-confirm).
   const urlWarning =
     effectiveUrl.trim() !== "" && !isValidStyleUrl(effectiveUrl.trim())
-      ? "This does not look like a MapLibre style URL — it must be http(s) and point at a style JSON."
+      ? "This does not look like a map style URL — it must be http(s) and point at a style JSON."
       : null;
 
   const saveTimer = useRef<number | null>(null);
@@ -70,7 +72,8 @@ export default function SettingsView() {
     saveTimer.current = window.setTimeout(() => setSavedAt(null), 4000);
   }
 
-  function reset(): void {
+  /** Discards the unsaved draft only — stored settings are untouched. */
+  function discard(): void {
     setDraftStyle(null);
     setDraftUrl(null);
   }
@@ -106,74 +109,98 @@ export default function SettingsView() {
   }
 
   return (
-    <div className="mx-auto max-w-2xl space-y-6 p-6">
-      <h1 className="font-display text-2xl font-semibold">Settings</h1>
+    <div className="mx-auto min-w-0 max-w-2xl space-y-8 overflow-y-auto p-4 pb-16 sm:p-6 sm:pb-16">
+      <header>
+        <h1 className="page-title">Settings</h1>
+        <p className="mt-1 text-sm text-muted-foreground">
+          Appearance, your data, and how nksha protects it.
+        </p>
+      </header>
 
-      <section className="rounded-lg border border-border bg-card p-4">
+      {/* Appearance ------------------------------------------------------- */}
+      <section className="rounded-card border border-border bg-card p-5">
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <h2 className="text-sm font-medium">Appearance</h2>
+          <h2 className="section-title">Appearance</h2>
           {savedAt !== null && (
-            <p role="status" data-testid="settings-saved" className="text-xs text-primary">
+            <p role="status" data-testid="settings-saved" className="text-sm text-positive">
               Settings saved
             </p>
           )}
         </div>
 
-        <label
-          htmlFor="basemap-style"
-          className="mt-3 block text-sm font-medium"
-        >
-          Basemap style
-        </label>
-        <p className="mt-1 text-sm text-muted-foreground">
-          Applied to the map and the rest of the app. Stored locally on this
-          device.
-        </p>
-        <select
-          id="basemap-style"
-          className="mt-3 h-11 rounded-md border border-border bg-background px-3 text-sm"
-          value={effectiveStyle}
-          onChange={(e) => setDraftStyle(e.target.value as BasemapStyle)}
-        >
-          {STYLE_OPTIONS.map((opt) => (
-            <option key={opt.value} value={opt.value}>
-              {opt.label}
-            </option>
-          ))}
-        </select>
+        <fieldset className="mt-4">
+          <legend className="text-sm font-medium">Map and app theme</legend>
+          <div className="mt-3 grid grid-cols-2 gap-3">
+            {STYLE_OPTIONS.map((opt) => {
+              const selected = effectiveStyle === opt.value;
+              return (
+                <button
+                  key={opt.value}
+                  type="button"
+                  aria-pressed={selected}
+                  onClick={() => setDraftStyle(opt.value)}
+                  className={cn(
+                    "rounded-xl border p-3 text-left transition-colors",
+                    selected
+                      ? "border-primary ring-2 ring-ring"
+                      : "border-border hover:bg-muted",
+                  )}
+                >
+                  {/* Preview tile. */}
+                  <span
+                    aria-hidden
+                    className={cn(
+                      "mb-2 block h-14 w-full rounded-lg border border-border",
+                      opt.value === "dark"
+                        ? "bg-gradient-to-br from-[#16233f] via-[#1c2c50] to-[#0f1830]"
+                        : "bg-gradient-to-br from-[#f2ead9] via-[#e9dfc8] to-[#dcd0b4]",
+                    )}
+                  />
+                  <span className="block text-sm font-medium">{opt.label}</span>
+                  <span className="block text-xs text-muted-foreground">{opt.hint}</span>
+                </button>
+              );
+            })}
+          </div>
+        </fieldset>
 
-        <label
-          htmlFor="custom-style-url"
-          className="mt-4 block text-sm font-medium"
+        {/* Advanced: custom style URL is an expert control (#settings). */}
+        <details
+          open={advancedOpen}
+          onToggle={(e) => setAdvancedOpen((e.target as HTMLDetailsElement).open)}
+          className="mt-4 border-t border-border pt-3 text-sm"
         >
-          Custom MapLibre style URL
-        </label>
-        <p className="mt-1 text-sm text-muted-foreground">
-          A MapLibre style JSON served over HTTP(S). When set, it replaces the
-          built-in styles above; if it fails to load, nksha falls back to the
-          default.
-        </p>
-        <input
-          id="custom-style-url"
-          type="text"
-          value={effectiveUrl}
-          placeholder="Paste a MapLibre style JSON URL"
-          aria-invalid={urlWarning !== null}
-          className="mt-3 h-11 w-full rounded-md border border-border bg-background px-3 text-sm aria-invalid:border-destructive"
-          onChange={(e) => setDraftUrl(e.target.value)}
-        />
-        {urlWarning && (
-          <p role="alert" className="mt-2 text-sm text-destructive">
-            {urlWarning}
+          <summary className="cursor-pointer font-medium text-muted-foreground">
+            Advanced · custom map style URL
+          </summary>
+          <p className="mt-2 text-muted-foreground">
+            A style JSON served over HTTP(S). When set, it replaces the built-in
+            styles above; if it fails to load, nksha falls back to the default.
+            Note: a custom style can contact its host — that traffic leaves this
+            device, unlike everything else in nksha.
           </p>
-        )}
+          <input
+            type="text"
+            value={effectiveUrl}
+            placeholder="Paste a style JSON URL"
+            aria-label="Custom map style URL"
+            aria-invalid={urlWarning !== null}
+            className="mt-3 h-11 w-full rounded-md border border-border bg-background px-3 text-[15px] aria-invalid:border-destructive"
+            onChange={(e) => setDraftUrl(e.target.value)}
+          />
+          {urlWarning && (
+            <p role="alert" className="mt-2 text-sm text-destructive">
+              {urlWarning}
+            </p>
+          )}
+        </details>
 
-        <div className="mt-4 flex flex-wrap items-center gap-2">
+        <div className="mt-5 flex flex-wrap items-center gap-2">
           <button
             type="button"
             data-testid="settings-save"
             disabled={!dirty || urlWarning !== null}
-            className="min-h-11 rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground hover:opacity-90 disabled:pointer-events-none disabled:opacity-50"
+            className="min-h-11 rounded-lg bg-primary px-4 text-sm font-medium text-primary-foreground hover:opacity-90 disabled:pointer-events-none disabled:opacity-50"
             onClick={save}
           >
             Save changes
@@ -181,40 +208,44 @@ export default function SettingsView() {
           <button
             type="button"
             disabled={!dirty}
-            className="flex min-h-11 items-center gap-1.5 rounded-md border border-border px-3 text-sm hover:bg-muted disabled:pointer-events-none disabled:opacity-50"
-            onClick={reset}
+            className="flex min-h-11 items-center gap-1.5 rounded-lg border border-border px-3 text-sm hover:bg-muted disabled:pointer-events-none disabled:opacity-50"
+            onClick={discard}
           >
-            <RotateCcw size={14} aria-hidden /> Reset to default
+            <RotateCcw size={14} aria-hidden /> Discard changes
           </button>
           {dirty && savedAt === null && (
-            <span className="text-xs text-muted-foreground">
+            <span className="text-sm text-muted-foreground">
               Unsaved changes
             </span>
           )}
         </div>
       </section>
 
-      <section className="rounded-lg border border-border bg-card p-4">
-        <h2 className="text-sm font-medium">My data</h2>
-        <p className="mt-1 text-sm text-muted-foreground">
-          Everything lives only on this device, so an Archive file is your
-          backup: places, visits, movements, trips, settings, and what you
-          have dismissed. Restore merges by id — nothing is deleted.
+      {/* My data ---------------------------------------------------------- */}
+      <section className="rounded-card border border-border bg-card p-5">
+        <h2 className="section-title">My data</h2>
+        <p className="mt-1.5 text-sm leading-relaxed text-muted-foreground">
+          Everything lives only in this browser — browser storage can be
+          cleared by your browser or operating system, so an Archive backup file
+          is your safety net: places, visits, movements, trips, settings, and
+          what you have dismissed.
         </p>
-        <div className="mt-3 flex flex-wrap gap-2">
+        <div className="mt-4 flex flex-wrap gap-2">
           <button
             type="button"
-            className="flex min-h-11 items-center gap-2 rounded-md bg-primary px-3 py-2 text-sm text-primary-foreground hover:opacity-90"
+            data-testid="download-archive"
+            className="flex min-h-11 items-center gap-2 rounded-lg bg-primary px-3 py-2 text-sm font-medium text-primary-foreground hover:opacity-90"
             onClick={() => void exportArchive()}
           >
-            <Download size={15} aria-hidden /> Export my data
+            <Download size={15} aria-hidden /> Download Archive backup
           </button>
           <button
             type="button"
-            className="flex min-h-11 items-center gap-2 rounded-md border border-border px-3 py-2 text-sm hover:bg-muted"
+            data-testid="restore-archive"
+            className="flex min-h-11 items-center gap-2 rounded-lg border border-border px-3 py-2 text-sm hover:bg-muted"
             onClick={() => restoreInputRef.current?.click()}
           >
-            <Upload size={15} aria-hidden /> Restore from Archive…
+            <Upload size={15} aria-hidden /> Restore Archive
           </button>
           <input
             ref={restoreInputRef}
@@ -235,25 +266,36 @@ export default function SettingsView() {
           </p>
         )}
         {restoreState.phase === "done" && (
-          <p role="status" className="mt-3 text-sm">
-            Restored {restoreState.outcome.places} places,{" "}
-            {restoreState.outcome.visits} visits,{" "}
-            {restoreState.outcome.movements} movements,{" "}
-            {restoreState.outcome.trips} trips.
-          </p>
+          <div role="status" data-testid="restore-result" className="mt-3 rounded-xl bg-muted p-3 text-sm">
+            <p>
+              Restored {restoreState.outcome.places} places,{" "}
+              {restoreState.outcome.visits} visits,{" "}
+              {restoreState.outcome.movements} movements,{" "}
+              {restoreState.outcome.trips} trips. Nothing was deleted — restore
+              merges by id.
+            </p>
+            <a href="/" className="mt-1 inline-block font-medium text-primary underline underline-offset-2">
+              Open my atlas
+            </a>
+          </div>
         )}
         {restoreState.phase === "error" && (
-          <p role="alert" className="mt-3 text-sm text-destructive">
-            {restoreState.message}
+          <p role="alert" className="mt-3 rounded-xl bg-destructive/10 p-3 text-sm text-destructive">
+            {restoreState.message} Your current data was not changed.
           </p>
         )}
       </section>
 
-      <p className="text-xs text-muted-foreground">
-        Everything in nksha runs in your browser and your timeline data never
-        leaves this device. The one exception you will see in your network tab:
-        map tiles, served by Carto (or by a style URL you configure yourself).
-      </p>
+      {/* Privacy ---------------------------------------------------------- */}
+      <section className="rounded-card border border-border bg-card p-5">
+        <h2 className="section-title">Privacy</h2>
+        <ul className="mt-2 space-y-1.5 text-sm leading-relaxed text-muted-foreground">
+          <li>Timeline records stay in this browser.</li>
+          <li>nksha has no account and no telemetry.</li>
+          <li>The basemap tiles come from the configured tile provider.</li>
+          <li>A custom map style may contact its host.</li>
+        </ul>
+      </section>
     </div>
   );
 }

@@ -77,10 +77,25 @@ describe("PlaybackView story title card (#a11y)", () => {
       "div[inert]",
     );
     expect(controls).toBeTruthy();
-    expect(
-      controls!.querySelector('[aria-label="Playback speed"]'),
-    ).toBeTruthy();
-    expect(controls!.textContent).toContain("Export MP4");
+    // The lean transport keeps the secondary controls behind "More options".
+    expect(controls!.textContent).toContain("More options");
+    expect(controls!.querySelector('[aria-label="Scrub through time"]')).toBeTruthy();
+    await disposeTestDb(db);
+  });
+
+  it("keeps secondary controls behind a More options toggle", async () => {
+    const db = (await seedData("playback-secondary")) as never;
+    renderView();
+    await screen.findByRole("button", { name: /Begin the trip/ });
+    fireEvent.click(screen.getByRole("button", { name: /Begin the trip/ }));
+    await waitFor(() =>
+      expect(screen.queryByRole("button", { name: /Begin the trip/ })).toBeNull(),
+    );
+    // The transport stays lean: speed and export live in the secondary panel.
+    expect(screen.queryByLabelText("Playback speed")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "More options" }));
+    expect(screen.getByLabelText("Playback speed")).toBeTruthy();
+    expect(screen.getByText("Export MP4")).toBeTruthy();
     await disposeTestDb(db);
   });
 

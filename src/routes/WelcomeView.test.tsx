@@ -16,44 +16,35 @@ describe("WelcomeView (#first-run)", () => {
 
   it("leads with the product statement and a single primary action", () => {
     renderView();
-    expect(screen.getByText("Your life, mapped privately.")).toBeTruthy();
-    const cta = screen.getByText("Import your timeline").closest("a");
+    expect(screen.getByText("Your travels, kept close.")).toBeTruthy();
+    const cta = screen.getByText("Choose timeline file").closest("a");
     expect(cta?.getAttribute("href")).toBe("/import");
   });
 
-  it("makes the privacy promise and trust badge visible", () => {
+  it("makes the privacy promise and trust facts visible", () => {
     renderView();
     expect(
-      screen.getByText(/it never leaves this device/),
+      screen.getByText(/private atlas that stays in this browser/),
     ).toBeTruthy();
-    expect(
-      screen.getByText(/Your data stays in this browser/),
-    ).toBeTruthy();
+    expect(screen.getByText(/Parsed in this browser/)).toBeTruthy();
+    expect(screen.getByText(/Stored on this device/)).toBeTruthy();
+    expect(screen.getByText(/No account or telemetry/)).toBeTruthy();
   });
 
-  it("names the three benefits of importing", () => {
+  it("shows a clearly-labelled example atlas as product proof", () => {
     renderView();
-    for (const title of [
-      "Explore your places",
-      "Replay your years",
-      "Find your patterns",
-    ]) {
-      expect(screen.getByText(title)).toBeTruthy();
-    }
-  });
-
-  it("explains which Google export file to choose", () => {
-    renderView();
-    expect(document.body.textContent).toMatch(/takeout\.google\.com/);
-    expect(document.body.textContent).toMatch(/Location History \(Timeline\)\.json/);
-  });
-
-  it("labels its preview as synthetic sample data", () => {
-    renderView();
-    expect(screen.getByText(/Sample preview/)).toBeTruthy();
+    expect(screen.getByText(/Example atlas/)).toBeTruthy();
     // The preview is decorative SVG, hidden from assistive tech.
     expect(
-      document.querySelector('[data-testid="welcome-preview"]')?.getAttribute("aria-hidden"),
+      document
+        .querySelector('[data-testid="welcome-preview"]')
+        ?.getAttribute("aria-hidden"),
     ).toBe("true");
+  });
+
+  it("offers a secondary path that explains how to export", () => {
+    renderView();
+    const how = screen.getByText(/See how to export it/).closest("a");
+    expect(how?.getAttribute("href")).toBe("/import#how-to-export");
   });
 });

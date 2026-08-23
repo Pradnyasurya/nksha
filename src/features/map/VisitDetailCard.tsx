@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { X } from "lucide-react";
 import type { Place, Trip, Visit } from "@/db/schema";
 import { renamePlace, setHomePlace } from "@/db/repo";
 import { yearColor } from "@/features/map/visitsLayer";
@@ -81,12 +82,12 @@ export function VisitDetailCard({
   }
 
   return (
-    <aside className="absolute bottom-36 left-3 right-3 z-10 max-h-[60%] overflow-y-auto rounded-lg border border-border bg-card p-4 shadow-lg sm:bottom-auto sm:left-4 sm:right-auto sm:top-4 sm:w-80">
+    <aside className="map-chrome absolute bottom-36 left-3 right-3 z-10 max-h-[60%] overflow-y-auto rounded-xl p-4 shadow-none sm:bottom-auto sm:left-4 sm:right-auto sm:top-4 sm:w-80">
       <div className="flex items-start justify-between gap-2">
-        <h2 className="font-display text-base font-semibold leading-snug">
+        <h2 className="font-display text-lg font-semibold leading-snug">
           {place.name}
           {place.isHome === 1 && (
-            <span className="ml-1.5 align-middle text-[10px] font-normal text-primary">
+            <span className="ml-2 align-middle text-xs font-normal text-primary">
               ★ Home
             </span>
           )}
@@ -103,7 +104,7 @@ export function VisitDetailCard({
           className="-mr-1 -mt-1 flex size-8 items-center justify-center rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
           onClick={onClose}
         >
-          ✕
+          <X size={16} aria-hidden />
         </button>
       </div>
 

@@ -109,6 +109,7 @@ export default function PlaybackView() {
   const [startedSession, setStartedSession] = useState("");
   const started = session !== null && startedSession === session;
   const [showChapters, setShowChapters] = useState(false);
+  const [showSecondary, setShowSecondary] = useState(false);
   const t = clock.session !== "" && clock.session === session ? clock.t : null;
   const playing = clock.playing && clock.session === session;
   const setT = (next: number): void =>
@@ -504,77 +505,46 @@ export default function PlaybackView() {
         className="absolute inset-x-0 bottom-0 z-10 border-t border-border bg-card/95 p-3 backdrop-blur"
       >
         <div className="mx-auto flex max-w-4xl flex-col gap-2">
-          <div className="flex flex-wrap items-center gap-1.5 text-xs">
-            <span className="mr-1 font-medium">Story:</span>
+          {/* Always-visible transport: play, scrubber, date, state, exit. */}
+          <div className="flex flex-wrap items-center gap-2 text-sm">
+            <button
+              ref={pauseButtonRef}
+              type="button"
+              className="flex min-h-11 items-center rounded-lg bg-primary px-4 py-2 font-medium text-primary-foreground hover:opacity-90"
+              disabled={exporting}
+              onClick={() => setPlaying((was) => !was)}
+            >
+              {playing ? "Pause" : "Play"}
+            </button>
+            <span className="tabular text-muted-foreground">
+              {t !== null ? READOUT_FORMAT.format(new Date(t)) : "—"}
+            </span>
+            {frame?.dot && (
+              <span className="truncate text-muted-foreground">
+                {frame.phase === "stay"
+                  ? `Staying at ${placeName(places, frame.activePlaceId)}`
+                  : frame.phase === "travel"
+                    ? "In transit…"
+                    : ""}
+              </span>
+            )}
+            {tripStats && (
+              <span className="tabular text-muted-foreground">
+                {frame?.arrivedCount ?? 0}/{totalInRange} visits ·{" "}
+                {tripStats.distanceMeters >= 1000
+                  ? `${Math.round(tripStats.distanceMeters / 1000).toLocaleString()} km`
+                  : `${Math.round(tripStats.distanceMeters)} m`}
+              </span>
+            )}
             <button
               type="button"
-              aria-pressed={customFrom === null && customTo === null}
-              onClick={() => applyPreset(null)}
-              className={cn(
-                "min-h-9 rounded-full border px-3 py-1.5",
-                customFrom === null && customTo === null
-                  ? "border-primary bg-accent font-medium"
-                  : "border-border hover:bg-muted",
-              )}
+              aria-expanded={showSecondary}
+              onClick={() => setShowSecondary((v) => !v)}
+              className="ml-auto flex min-h-11 items-center gap-1.5 rounded-lg border border-border px-3 text-sm hover:bg-muted"
             >
-              All time
+              {showSecondary ? "Hide options" : "More options"}
             </button>
-            {presetYears.map((y) => {
-              const active = customFrom === `${y}-01-01` && customTo === `${y}-12-31`;
-              return (
-                <button
-                  key={y}
-                  type="button"
-                  aria-pressed={active}
-                  onClick={() => applyPreset(y)}
-                  className={cn(
-                    "min-h-9 rounded-full border px-3 py-1.5 tabular-nums",
-                    active
-                      ? "border-primary bg-accent font-medium"
-                      : "border-border hover:bg-muted",
-                  )}
-                >
-                  {y} recap
-                </button>
-              );
-            })}
-            {chapters.length > 0 && (
-              <button
-                type="button"
-                aria-expanded={showChapters}
-                onClick={() => setShowChapters((v) => !v)}
-                className="ml-auto flex min-h-9 items-center gap-1.5 rounded-full border border-border px-3 py-1.5 hover:bg-muted"
-              >
-                <ListVideo size={14} aria-hidden />
-                Chapters ({chapters.length})
-              </button>
-            )}
           </div>
-
-          {showChapters && chapters.length > 0 && (
-            <ol
-              aria-label="Trip chapters"
-              className="max-h-36 overflow-y-auto rounded-md border border-border bg-background p-1 text-xs"
-            >
-              {chapters.map((chapter, index) => (
-                <li key={`${chapter.atMs}-${index}`}>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      tRef.current = chapter.atMs;
-                      setT(chapter.atMs);
-                    }}
-                    className="flex min-h-9 w-full items-center justify-between gap-3 rounded px-2 py-1.5 text-left hover:bg-muted"
-                  >
-                    <span className="truncate">{chapter.name}</span>
-                    <span className="shrink-0 tabular-nums text-muted-foreground">
-                      {DATE_ONLY.format(new Date(chapter.atMs))}
-                    </span>
-                  </button>
-                </li>
-              ))}
-            </ol>
-          )}
 
           <input
             aria-label="Scrub through time"
@@ -588,81 +558,140 @@ export default function PlaybackView() {
             }
             className="w-full accent-primary"
           />
-          <div className="flex flex-wrap items-center gap-2 text-xs">
-            <button
-              ref={pauseButtonRef}
-              type="button"
-              className="flex min-h-11 items-center rounded-md bg-primary px-4 py-2 font-medium text-primary-foreground hover:opacity-90"
-              disabled={exporting}
-              onClick={() => setPlaying((was) => !was)}
-            >
-              {playing ? "Pause" : "Play"}
-            </button>
-            <select
-              aria-label="Playback speed"
-              value={speedMultiplier}
-              disabled={exporting}
-              onChange={(event) => setSpeedMultiplier(Number(event.target.value))}
-              className="h-11 rounded-md border border-border bg-background px-1.5"
-            >
-              {SPEEDS.map((speed) => (
-                <option key={speed.multiplier} value={speed.multiplier}>
-                  {speed.label}
-                </option>
-              ))}
-            </select>
-            <span className="tabular-nums text-muted-foreground">
-              {t !== null ? READOUT_FORMAT.format(new Date(t)) : "—"}
-            </span>
-            {tripStats && (
-              <span className="tabular-nums text-muted-foreground">
-                ·{" "}
-                {tripStats.distanceMeters >= 1000
-                  ? `${Math.round(tripStats.distanceMeters / 1000).toLocaleString()} km travelled`
-                  : `${Math.round(tripStats.distanceMeters)} m travelled`}{" "}
-                · {formatElapsed(tripStats.elapsedMs)} elapsed
-              </span>
+
+          {/* Secondary controls in an expandable panel (#playback-controls). */}
+          {showSecondary && (
+          <div className="flex flex-col gap-3 rounded-xl border border-border bg-background/60 p-3 text-sm">
+            <div className="flex flex-wrap items-center gap-1.5">
+              <span className="mr-1 font-medium">Story:</span>
+              <button
+                type="button"
+                aria-pressed={customFrom === null && customTo === null}
+                onClick={() => applyPreset(null)}
+                className={cn(
+                  "min-h-9 rounded-full border px-3 py-1.5",
+                  customFrom === null && customTo === null
+                    ? "border-primary bg-accent font-medium"
+                    : "border-border hover:bg-muted",
+                )}
+              >
+                All time
+              </button>
+              {presetYears.map((y) => {
+                const active = customFrom === `${y}-01-01` && customTo === `${y}-12-31`;
+                return (
+                  <button
+                    key={y}
+                    type="button"
+                    aria-pressed={active}
+                    onClick={() => applyPreset(y)}
+                    className={cn(
+                      "min-h-9 rounded-full border px-3 py-1.5 tabular",
+                      active
+                        ? "border-primary bg-accent font-medium"
+                        : "border-border hover:bg-muted",
+                    )}
+                  >
+                    {y} recap
+                  </button>
+                );
+              })}
+              {chapters.length > 0 && (
+                <button
+                  type="button"
+                  aria-expanded={showChapters}
+                  onClick={() => setShowChapters((v) => !v)}
+                  className="ml-auto flex min-h-9 items-center gap-1.5 rounded-full border border-border px-3 py-1.5 hover:bg-muted"
+                >
+                  <ListVideo size={14} aria-hidden />
+                  Chapters ({chapters.length})
+                </button>
+              )}
+            </div>
+
+            {showChapters && chapters.length > 0 && (
+              <ol
+                aria-label="Trip chapters"
+                className="max-h-36 overflow-y-auto rounded-md border border-border bg-background p-1 text-sm"
+              >
+                {chapters.map((chapter, index) => (
+                  <li key={`${chapter.atMs}-${index}`}>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        tRef.current = chapter.atMs;
+                        setT(chapter.atMs);
+                      }}
+                      className="flex min-h-10 w-full items-center justify-between gap-3 rounded px-2 py-1.5 text-left hover:bg-muted"
+                    >
+                      <span className="truncate">{chapter.name}</span>
+                      <span className="shrink-0 tabular text-muted-foreground">
+                        {DATE_ONLY.format(new Date(chapter.atMs))}
+                      </span>
+                    </button>
+                  </li>
+                ))}
+              </ol>
             )}
-            <span className="tabular-nums text-muted-foreground">
-              {frame?.arrivedCount ?? 0}/{totalInRange} visits
-            </span>
-            <label className="ml-auto flex items-center gap-1.5">
-              <input
-                type="checkbox"
-                checked={follow}
-                onChange={(event) => setFollow(event.target.checked)}
-              />
-              Follow dot
-            </label>
-            <label className="flex items-center gap-1.5">
-              From
-              <input
-                type="date"
-                value={toDayKeyInput(range.startMs)}
-                max={toDayKeyInput(range.endMs)}
-                onChange={(event) => setCustomFrom(event.target.value || null)}
-                className="h-8 rounded-md border border-border bg-background px-1.5"
-              />
-            </label>
-            <label className="flex items-center gap-1.5">
-              To
-              <input
-                type="date"
-                value={toDayKeyInput(range.endMs)}
-                min={toDayKeyInput(range.startMs)}
-                onChange={(event) => setCustomTo(event.target.value || null)}
-                className="h-8 rounded-md border border-border bg-background px-1.5"
-              />
-            </label>
-            <button
-              type="button"
-              className="min-h-11 rounded-md border border-border px-4 py-2 font-medium hover:bg-muted disabled:pointer-events-none disabled:opacity-50"
-              disabled={exporting}
-              onClick={beginExportRequest}
-            >
-              Export MP4
-            </button>
+
+            <div className="flex flex-wrap items-center gap-4">
+              <label className="flex items-center gap-2 font-medium">
+                Speed
+                <select
+                  aria-label="Playback speed"
+                  value={speedMultiplier}
+                  disabled={exporting}
+                  onChange={(event) => setSpeedMultiplier(Number(event.target.value))}
+                  className="h-10 rounded-md border border-border bg-background px-1.5"
+                >
+                  {SPEEDS.map((speed) => (
+                    <option key={speed.multiplier} value={speed.multiplier}>
+                      {speed.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="flex items-center gap-1.5">
+                <input
+                  type="checkbox"
+                  checked={follow}
+                  onChange={(event) => setFollow(event.target.checked)}
+                />
+                Follow dot
+              </label>
+              <label className="flex items-center gap-1.5">
+                From
+                <input
+                  type="date"
+                  aria-label="Custom range start"
+                  value={toDayKeyInput(range.startMs)}
+                  max={toDayKeyInput(range.endMs)}
+                  onChange={(event) => setCustomFrom(event.target.value || null)}
+                  className="h-9 rounded-md border border-border bg-background px-1.5"
+                />
+              </label>
+              <label className="flex items-center gap-1.5">
+                To
+                <input
+                  type="date"
+                  aria-label="Custom range end"
+                  value={toDayKeyInput(range.endMs)}
+                  min={toDayKeyInput(range.startMs)}
+                  onChange={(event) => setCustomTo(event.target.value || null)}
+                  className="h-9 rounded-md border border-border bg-background px-1.5"
+                />
+              </label>
+              <button
+                type="button"
+                className="ml-auto min-h-10 rounded-lg border border-border px-4 py-2 font-medium hover:bg-muted disabled:pointer-events-none disabled:opacity-50"
+                disabled={exporting}
+                onClick={beginExportRequest}
+              >
+                Export MP4
+              </button>
+            </div>
           </div>
+          )}
 
           {exportState.phase === "confirming" && (
             <div className="rounded-md border border-border bg-background p-3 text-xs" role="alertdialog" aria-label="Long export warning">
@@ -752,14 +781,6 @@ function storyTitle(range: { startMs: number; endMs: number }): string {
   if (startYear === endYear) return `Your ${startYear}`;
   const years = endYear - startYear;
   return `Your ${years} year${years === 1 ? "" : "s"}, ${startYear}–${endYear}`;
-}
-
-function formatElapsed(ms: number): string {
-  const minutes = Math.floor(ms / 60_000);
-  if (minutes < 60) return `${minutes} min`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 48) return `${hours} h`;
-  return `${Math.round(hours / 24)} d`;
 }
 
 function toDayKeyInput(ms: number): string {
