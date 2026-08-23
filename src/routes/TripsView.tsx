@@ -1,21 +1,27 @@
 import { useLiveQuery } from "dexie-react-hooks";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
+import { Home, Search } from "lucide-react";
 import { getDb } from "@/db/db";
-import type { Trip } from "@/db/schema";
+import type { Place, Trip, Visit } from "@/db/schema";
 import {
   createDeclaredTrip,
   deleteTrip,
   dismissInferredTrip,
+  getHomePlace,
   renameTrip,
   rerunTripInference,
+  setHomePlace,
   tripsByStart,
 } from "@/db/repo";
 import { visitsInTrip, suggestTripName } from "@/features/trips/trips";
 
 export default function TripsView() {
   const trips = useLiveQuery(() => tripsByStart(), [], [] as Trip[]);
-  const visits = useLiveQuery(() => getDb().visits.toArray(), [], []);
+  const visits = useLiveQuery(() => getDb().visits.toArray(), [], [] as Visit[]);
+  const places = useLiveQuery(() => getDb().places.toArray(), [], [] as Place[]);
+  const home = useLiveQuery(() => getHomePlace(), [], undefined as Place | undefined);
+  const [rerunResult, setRerunResult] = useState<number | null>(null);
 
   const [name, setName] = useState("");
   const [startDay, setStartDay] = useState("");
@@ -40,24 +46,87 @@ export default function TripsView() {
   const windowVisitCount =
     startDay && endDay ? visitsInTrip(visits, startDay, endDay).length : null;
 
+  // Inference needs a declared Home (#trips-onboarding): without one it can
+  // never know what "away" means. Explain that instead of a silent no-op.
+  const hasVisits = visits.length > 0;
+  const hasHome = home !== undefined;
+  const prerequisitesMet = hasVisits && hasHome;
+
+  async function rerun(): Promise<void> {
+    setRerunning(true);
+    try {
+      const created = await rerunTripInference();
+      setRerunResult(created);
+    } finally {
+      setRerunning(false);
+    }
+  }
+
   return (
     <div className="mx-auto min-w-0 max-w-3xl space-y-4 overflow-y-auto p-4 sm:p-6">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h1 className="font-display text-2xl font-semibold">Trips</h1>
-        {visits.length > 0 && (
-          <button
-            type="button"
-            disabled={rerunning}
-            className="min-h-11 rounded-md border border-border px-3 py-2 text-sm hover:bg-muted disabled:pointer-events-none disabled:opacity-50"
-            onClick={() => {
-              setRerunning(true);
-              void rerunTripInference().finally(() => setRerunning(false));
-            }}
-          >
-            {rerunning ? "Re-running…" : "Re-run suggestions"}
-          </button>
-        )}
+        <button
+          type="button"
+          disabled={rerunning || !prerequisitesMet}
+          title={
+            !hasVisits
+              ? "Import your timeline first — suggestions come from your visits."
+              : !hasHome
+                ? "Choose a Home place first — inference needs to know where you start from."
+                : undefined
+          }
+          className="min-h-11 rounded-md border border-border px-3 py-2 text-sm hover:bg-muted disabled:pointer-events-none disabled:opacity-50"
+          onClick={() => void rerun()}
+        >
+          {rerunning ? "Re-running…" : "Re-run suggestions"}
+        </button>
       </div>
+
+      {!prerequisitesMet && (
+        <section
+          aria-label="Trip suggestions setup"
+          className="rounded-lg border border-border bg-card p-4 text-sm"
+        >
+          <p className="font-medium">Automatic trip suggestions need two things:</p>
+          <ul className="mt-2 list-disc space-y-1 pl-5 text-muted-foreground">
+            <li>
+              Visits in your timeline —{" "}
+              {hasVisits ? (
+                <span className="text-primary">done</span>
+              ) : (
+                <>
+                  <Link to="/import" className="text-primary underline">
+                    import your timeline
+                  </Link>{" "}
+                  first
+                </>
+              )}
+            </li>
+            <li>
+              A declared Home —{" "}
+              {hasHome ? (
+                <span className="text-primary">{home!.name || "set"}</span>
+              ) : (
+                "not chosen yet"
+              )}
+            </li>
+          </ul>
+          {!hasHome && hasVisits && (
+            <div className="mt-3">
+              <ChooseHome places={places} onChosen={() => void rerun()} />
+            </div>
+          )}
+        </section>
+      )}
+
+      {rerunResult !== null && (
+        <p role="status" className="rounded-lg bg-muted p-3 text-sm">
+          {rerunResult === 0
+            ? "No trips matched the current rules — time away from Home beyond the minimum stay. Create one manually above."
+            : `Suggested ${rerunResult} ${rerunResult === 1 ? "trip" : "trips"} from days spent away from Home.`}
+        </p>
+      )}
 
       <form
         onSubmit={submit}
@@ -121,7 +190,13 @@ export default function TripsView() {
         </p>
       </form>
 
-      {trips.length === 0 && (
+      {trips.length === 0 && prerequisitesMet && rerunResult === 0 && (
+        <p className="rounded-lg border border-dashed border-border p-6 text-center text-sm text-muted-foreground">
+          No trips matched the current rules. You can still create one with the
+          dates above.
+        </p>
+      )}
+      {trips.length === 0 && rerunResult !== 0 && (
         <p className="rounded-lg border border-dashed border-border p-6 text-center text-sm text-muted-foreground">
           No trips yet. Create one with the dates above, or{" "}
           <Link to="/import" className="text-primary underline">
@@ -140,6 +215,98 @@ export default function TripsView() {
           />
         ))}
       </ul>
+    </div>
+  );
+}
+
+/**
+ * Searchable Home picker (#choose-home): a text-first alternative to hunting
+ * for a map pin. Lists every known place; picking one flags it as Home and
+ * immediately re-runs inference so the payoff is visible in place.
+ */
+function ChooseHome({
+  places,
+  onChosen,
+}: {
+  places: Place[];
+  onChosen: () => void;
+}) {
+  const [query, setQuery] = useState("");
+  const [open, setOpen] = useState(false);
+
+  const matches = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    const pool = [...places].sort((a, b) =>
+      (a.name || "").localeCompare(b.name || ""),
+    );
+    if (!q) return pool.slice(0, 30);
+    return pool
+      .filter(
+        (p) =>
+          (p.name || "").toLowerCase().includes(q) ||
+          p.address.toLowerCase().includes(q),
+      )
+      .slice(0, 30);
+  }, [places, query]);
+
+  return (
+    <div data-testid="choose-home">
+      {!open ? (
+        <button
+          type="button"
+          onClick={() => setOpen(true)}
+          className="flex min-h-11 items-center gap-2 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:opacity-90"
+        >
+          <Home size={15} aria-hidden /> Choose Home
+        </button>
+      ) : (
+        <div className="space-y-2">
+          <div className="relative">
+            <Search
+              size={14}
+              aria-hidden
+              className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground"
+            />
+            <input
+              autoFocus
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Search your places…"
+              aria-label="Search places to choose Home"
+              className="h-11 w-full rounded-md border border-border bg-background pl-8 pr-3 text-sm"
+            />
+          </div>
+          {matches.length === 0 ? (
+            <p className="text-sm text-muted-foreground">
+              No places match “{query}”.
+            </p>
+          ) : (
+            <ul className="max-h-56 divide-y divide-border overflow-y-auto rounded-md border border-border">
+              {matches.map((place) => (
+                <li key={place.id}>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      void setHomePlace(place.id).then(onChosen);
+                      setOpen(false);
+                      setQuery("");
+                    }}
+                    className="flex min-h-11 w-full items-center gap-2 px-2 py-2 text-left text-sm hover:bg-muted"
+                  >
+                    <Home size={13} aria-hidden className="shrink-0 text-muted-foreground" />
+                    <span className="min-w-0 truncate">
+                      {place.name || "Unnamed place"}
+                      <span className="block truncate text-xs text-muted-foreground">
+                        {place.address}
+                      </span>
+                    </span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
     </div>
   );
 }

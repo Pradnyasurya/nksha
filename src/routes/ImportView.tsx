@@ -195,7 +195,7 @@ export default function ImportView() {
             {state.phase === "done" ? `${state.fileName} imported` : ""}
           </p>
 
-          {report.visitsCreated === 0 && (
+          {report.visitsInFile === 0 && (
             <p
               role="alert"
               className="mt-3 flex items-start gap-2 rounded-md bg-accent p-3 text-sm"
@@ -204,6 +204,18 @@ export default function ImportView() {
               No visits came out of this file. It may contain only travel
               entries, or history too recent for Timeline to have processed.
               Your map will stay empty until an import produces visits.
+            </p>
+          )}
+
+          {report.visitsInFile > 0 && report.visitsCreated === 0 && (
+            <p
+              role="status"
+              data-testid="duplicate-import-note"
+              className="mt-3 flex items-start gap-2 rounded-md bg-muted p-3 text-sm"
+            >
+              <CheckCircle2 size={15} aria-hidden className="mt-0.5 shrink-0 text-primary" />
+              All {report.visitsSkipped || report.visitsInFile} visits were
+              already in your atlas. Nothing was changed.
             </p>
           )}
 

@@ -4,6 +4,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, describe, expect, it } from "vitest";
 import { Layout } from "@/routes/Layout";
+import ImportView from "@/routes/ImportView";
 import { openTestDb } from "@/test/testDb";
 import { getDb } from "@/db/db";
 import type { NkshaDB } from "@/db/schema";
@@ -171,5 +172,51 @@ describe("Layout — first-run gating (#first-run)", () => {
     // welcome content and without nav chrome.
     expect(container.textContent).not.toContain("Your life, mapped privately.");
     expect(container.querySelector("nav")).toBeNull();
+  });
+
+  it("lets a first-run user click Import your timeline and reach the file picker (#first-run)", async () => {
+    openTestDb("layout-first-run-cta");
+    render(
+      <MemoryRouter initialEntries={["/"]}>
+        <Routes>
+          <Route element={<Layout />}>
+            <Route index element={<p data-testid="stub">map</p>} />
+            <Route path="import" element={<ImportView />} />
+          </Route>
+        </Routes>
+      </MemoryRouter>,
+    );
+    // Welcome owns "/" on an empty database…
+    expect(
+      await screen.findByText("Your life, mapped privately."),
+    ).toBeTruthy();
+    cleanup();
+
+    // The CTA navigates to /import; render that route with the real view.
+    render(
+      <MemoryRouter initialEntries={["/import"]}>
+        <Routes>
+          <Route element={<Layout />}>
+            <Route index element={<p data-testid="stub">map</p>} />
+            <Route path="import" element={<ImportView />} />
+          </Route>
+        </Routes>
+      </MemoryRouter>,
+    );
+    expect(
+      await screen.findByText("Drop your Google Maps Timeline export here"),
+    ).toBeTruthy();
+    expect(screen.queryByText("Your life, mapped privately.")).toBeNull();
+    // The importer's real file input is reachable in this state.
+    expect(
+      document.querySelector('input[type="file"][accept*="json"]'),
+    ).toBeTruthy();
+  });
+
+  it("keeps /settings reachable on first run", async () => {
+    openTestDb("layout-first-run-settings");
+    renderLayout("/settings");
+    expect(await screen.findByTestId("stub")).toBeTruthy();
+    expect(screen.queryByText("Your life, mapped privately.")).toBeNull();
   });
 });

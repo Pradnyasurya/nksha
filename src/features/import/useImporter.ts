@@ -45,6 +45,8 @@ export interface ImportReport {
   placesFound: number;
   visitsCreated: number;
   visitsSkipped: number;
+  /** Visits the parsed file contained — created or already present. */
+  visitsInFile: number;
   movementsCreated: number;
   firstVisitTimeMs: number | null;
   lastVisitTimeMs: number | null;
@@ -252,11 +254,31 @@ async function insertParsed(
     visitsCreated: outcome.visitsCreated,
     visitsSkipped: outcome.visitsSkipped,
     movementsCreated: outcome.movementsCreated,
-    firstVisitTimeMs: outcome.firstVisitTimeMs,
-    lastVisitTimeMs: outcome.lastVisitTimeMs,
+    // Report the FILE's span, not just the created subset — on a duplicate
+    // import nothing is created but the range must still render.
+    visitsInFile: parsed.visits.length,
+    firstVisitTimeMs: parsedFileRange(parsed).firstMs,
+    lastVisitTimeMs: parsedFileRange(parsed).lastMs,
     tripsInferred,
     skippedSegments: parsed.skippedSegments,
     skippedByReason: parsed.skippedByReason,
     overlappingExisting,
   };
+}
+
+/** The imported file's own visit-date span (created or already stored). */
+function parsedFileRange(parsed: ParsedTimeline): {
+  firstMs: number | null;
+  lastMs: number | null;
+} {
+  let firstMs: number | null = null;
+  let lastMs: number | null = null;
+  for (const visit of parsed.visits) {
+    if (firstMs === null || visit.startTimeMs < firstMs) {
+      firstMs = visit.startTimeMs;
+    }
+    const end = visit.endTimeMs ?? visit.startTimeMs;
+    if (lastMs === null || end > lastMs) lastMs = end;
+  }
+  return { firstMs, lastMs };
 }

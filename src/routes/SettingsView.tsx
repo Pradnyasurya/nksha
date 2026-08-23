@@ -1,6 +1,6 @@
 import { useLiveQuery } from "dexie-react-hooks";
-import { useRef, useState } from "react";
-import { Download, Upload } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { Download, RotateCcw, Upload } from "lucide-react";
 import {
   getBasemapStyle,
   getCustomStyleUrl,
@@ -15,6 +15,7 @@ import {
   serializeArchive,
   type RestoreOutcome,
 } from "@/features/archive/archive";
+import { isValidStyleUrl } from "@/features/map/mapStyles";
 
 const STYLE_OPTIONS: { value: BasemapStyle; label: string }[] = [
   { value: "dark", label: "Dark" },
@@ -24,7 +25,6 @@ const STYLE_OPTIONS: { value: BasemapStyle; label: string }[] = [
 export default function SettingsView() {
   const style = useLiveQuery(() => getBasemapStyle(), [], "dark");
   const storedUrl = useLiveQuery(() => getCustomStyleUrl(), [], "");
-  const urlInputRef = useRef<HTMLInputElement>(null);
   const restoreInputRef = useRef<HTMLInputElement>(null);
   const [restoreState, setRestoreState] = useState<
     | { phase: "idle" }
@@ -33,10 +33,47 @@ export default function SettingsView() {
     | { phase: "error"; message: string }
   >({ phase: "idle" });
 
-  const commitUrl = () => {
-    const value = urlInputRef.current?.value ?? "";
-    void setCustomStyleUrl(value.trim());
-  };
+  // Appearance form state: edits stay local until Save (#settings-confirm),
+  // so a stray change never silently rewrites the basemap.
+  const [draftStyle, setDraftStyle] = useState<BasemapStyle | null>(null);
+  const [draftUrl, setDraftUrl] = useState<string | null>(null);
+  const [savedAt, setSavedAt] = useState<number | null>(null);
+
+  const effectiveStyle = draftStyle ?? style;
+  const effectiveUrl = draftUrl ?? storedUrl;
+  const dirty =
+    (draftStyle !== null && draftStyle !== style) ||
+    (draftUrl !== null && draftUrl !== storedUrl);
+
+  // A custom URL must at least look like a style URL before saving — warn
+  // inline instead of letting the map fail later (#settings-confirm).
+  const urlWarning =
+    effectiveUrl.trim() !== "" && !isValidStyleUrl(effectiveUrl.trim())
+      ? "This does not look like a MapLibre style URL — it must be http(s) and point at a style JSON."
+      : null;
+
+  const saveTimer = useRef<number | null>(null);
+  useEffect(() => () => {
+    if (saveTimer.current !== null) clearTimeout(saveTimer.current);
+  }, []);
+
+  function save(): void {
+    if (!dirty || urlWarning) return;
+    const urlToSave = draftUrl !== null ? draftUrl.trim() : storedUrl;
+    void setBasemapStyle(effectiveStyle).then(() =>
+      setCustomStyleUrl(urlToSave),
+    );
+    setDraftStyle(null);
+    setDraftUrl(null);
+    setSavedAt(Date.now());
+    if (saveTimer.current !== null) clearTimeout(saveTimer.current);
+    saveTimer.current = window.setTimeout(() => setSavedAt(null), 4000);
+  }
+
+  function reset(): void {
+    setDraftStyle(null);
+    setDraftUrl(null);
+  }
 
   async function exportArchive(): Promise<void> {
     const json = serializeArchive(await buildArchive());
@@ -73,9 +110,18 @@ export default function SettingsView() {
       <h1 className="font-display text-2xl font-semibold">Settings</h1>
 
       <section className="rounded-lg border border-border bg-card p-4">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <h2 className="text-sm font-medium">Appearance</h2>
+          {savedAt !== null && (
+            <p role="status" data-testid="settings-saved" className="text-xs text-primary">
+              Settings saved
+            </p>
+          )}
+        </div>
+
         <label
           htmlFor="basemap-style"
-          className="block text-sm font-medium"
+          className="mt-3 block text-sm font-medium"
         >
           Basemap style
         </label>
@@ -86,10 +132,8 @@ export default function SettingsView() {
         <select
           id="basemap-style"
           className="mt-3 h-11 rounded-md border border-border bg-background px-3 text-sm"
-          value={style}
-          onChange={(e) =>
-            void setBasemapStyle(e.target.value as BasemapStyle)
-          }
+          value={effectiveStyle}
+          onChange={(e) => setDraftStyle(e.target.value as BasemapStyle)}
         >
           {STYLE_OPTIONS.map((opt) => (
             <option key={opt.value} value={opt.value}>
@@ -109,24 +153,44 @@ export default function SettingsView() {
           built-in styles above; if it fails to load, nksha falls back to the
           default.
         </p>
-        <div className="mt-3 flex gap-2">
-          <input
-            key={storedUrl}
-            ref={urlInputRef}
-            id="custom-style-url"
-            type="text"
-            placeholder="Paste a MapLibre style JSON URL"
-            className="h-11 flex-1 rounded-md border border-border bg-background px-3 text-sm"
-            defaultValue={storedUrl}
-            onBlur={commitUrl}
-          />
+        <input
+          id="custom-style-url"
+          type="text"
+          value={effectiveUrl}
+          placeholder="Paste a MapLibre style JSON URL"
+          aria-invalid={urlWarning !== null}
+          className="mt-3 h-11 w-full rounded-md border border-border bg-background px-3 text-sm aria-invalid:border-destructive"
+          onChange={(e) => setDraftUrl(e.target.value)}
+        />
+        {urlWarning && (
+          <p role="alert" className="mt-2 text-sm text-destructive">
+            {urlWarning}
+          </p>
+        )}
+
+        <div className="mt-4 flex flex-wrap items-center gap-2">
           <button
             type="button"
-            className="h-11 rounded-md border border-border px-3 text-sm hover:bg-muted"
-            onClick={commitUrl}
+            data-testid="settings-save"
+            disabled={!dirty || urlWarning !== null}
+            className="min-h-11 rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground hover:opacity-90 disabled:pointer-events-none disabled:opacity-50"
+            onClick={save}
           >
-            Save
+            Save changes
           </button>
+          <button
+            type="button"
+            disabled={!dirty}
+            className="flex min-h-11 items-center gap-1.5 rounded-md border border-border px-3 text-sm hover:bg-muted disabled:pointer-events-none disabled:opacity-50"
+            onClick={reset}
+          >
+            <RotateCcw size={14} aria-hidden /> Reset to default
+          </button>
+          {dirty && savedAt === null && (
+            <span className="text-xs text-muted-foreground">
+              Unsaved changes
+            </span>
+          )}
         </div>
       </section>
 
@@ -193,4 +257,3 @@ export default function SettingsView() {
     </div>
   );
 }
-

@@ -31,10 +31,9 @@ import {
   planExport,
   type ExportPlan,
 } from "@/features/export/framePlanner";
-import {
-  encodePlaybackVideo,
-  ExportCancelledError,
-} from "@/features/export/videoExport";
+// mp4-muxer + WebCodecs glue load only when the user actually exports
+// (#bundle-budget) — it is one of the heavier chunks.
+const lazyVideoExport = () => import("@/features/export/videoExport");
 import { cn } from "@/lib/cn";
 
 const SPEEDS = [
@@ -290,6 +289,7 @@ export default function PlaybackView() {
       canvas.height = EXPORT_HEIGHT;
       const ctx2d = canvas.getContext("2d");
 
+      const { encodePlaybackVideo } = await lazyVideoExport();
       const result = await encodePlaybackVideo({
         plan,
         fallbackCanvas: canvas,
@@ -316,7 +316,7 @@ export default function PlaybackView() {
       downloadBlob(result.blob, playbackFileName(range, result.extension));
       setExportState({ phase: "idle" });
     } catch (error) {
-      if (error instanceof ExportCancelledError) {
+      if (await lazyVideoExport().then((m) => error instanceof m.ExportCancelledError)) {
         setExportState({ phase: "idle" });
       } else {
         setExportState({
@@ -390,6 +390,19 @@ export default function PlaybackView() {
     setPlaying(true);
   }
 
+  // Focus management (#a11y): while the title card covers the page, the
+  // playback controls behind it must not stay keyboard-reachable.
+  const titleCardRef = useRef<HTMLDivElement | null>(null);
+  const pauseButtonRef = useRef<HTMLButtonElement | null>(null);
+  useEffect(() => {
+    if (hasData && !started) {
+      titleCardRef.current?.querySelector<HTMLButtonElement>("button")?.focus();
+    }
+  }, [hasData, started]);
+  useEffect(() => {
+    if (playing) pauseButtonRef.current?.focus();
+  }, [playing]);
+
   const frame = timeline && t !== null ? renderAt(timeline, t) : null;
   const scrubFraction =
     timeline && t !== null
@@ -437,7 +450,12 @@ export default function PlaybackView() {
 
       {/* Cinematic title card: the story starts deliberately, not abruptly. */}
       {hasData && !started && (
-        <div className="absolute inset-0 z-20 flex items-center justify-center bg-background/85 p-6 text-center backdrop-blur-sm">
+        <div
+          ref={titleCardRef}
+          role="dialog"
+          aria-label="Story title card"
+          className="absolute inset-0 z-20 flex items-center justify-center bg-background/85 p-6 text-center backdrop-blur-sm"
+        >
           <div className="flex flex-col items-center gap-3">
             <p className="text-[11px] font-medium uppercase tracking-[0.3em] text-muted-foreground">
               nksha story
@@ -479,7 +497,12 @@ export default function PlaybackView() {
       )}
 
       {hasData && (
-      <div className="absolute inset-x-0 bottom-0 z-10 border-t border-border bg-card/95 p-3 backdrop-blur">
+      <div
+        // #a11y: while the title card covers the page, every control behind it
+        // is inert — not rendered-focusable by keyboard or assistive tech.
+        {...(!started ? { inert: true } : {})}
+        className="absolute inset-x-0 bottom-0 z-10 border-t border-border bg-card/95 p-3 backdrop-blur"
+      >
         <div className="mx-auto flex max-w-4xl flex-col gap-2">
           <div className="flex flex-wrap items-center gap-1.5 text-xs">
             <span className="mr-1 font-medium">Story:</span>
@@ -567,6 +590,7 @@ export default function PlaybackView() {
           />
           <div className="flex flex-wrap items-center gap-2 text-xs">
             <button
+              ref={pauseButtonRef}
               type="button"
               className="flex min-h-11 items-center rounded-md bg-primary px-4 py-2 font-medium text-primary-foreground hover:opacity-90"
               disabled={exporting}

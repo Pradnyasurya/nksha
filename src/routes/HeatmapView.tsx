@@ -13,6 +13,7 @@ import {
   type WeightedPlace,
 } from "@/features/heatmap/weights";
 import { buildCartoStyle } from "@/features/map/mapStyles";
+import { cn } from "@/lib/cn";
 
 const HEAT_SOURCE = "dwell-heat";
 const HEAT_LAYER = "dwell-heat-layer";
@@ -48,6 +49,21 @@ export default function HeatmapView() {
 
   const [fromYear, setFromYear] = useState<number | null>(null);
   const [toYear, setToYear] = useState<number | null>(null);
+
+  // Preset state (#heatmap-years): only meaningful with 2+ years of history.
+  const allTimeActive = fromYear === null && toYear === null;
+  const last12Months =
+    fromYear !== null &&
+    toYear !== null &&
+    new Date(`${fromYear}-01-01T00:00:00`).getTime() >=
+      mountedAtMs - 400 * 86_400_000;
+  const individualYears =
+    index.minYear !== null && index.maxYear !== null
+      ? Array.from(
+          { length: index.maxYear - index.minYear + 1 },
+          (_, i) => index.minYear! + i,
+        )
+      : [];
 
   const selected = useMemo(() => {
     if (index.minYear === null || index.maxYear === null) return null;
@@ -221,7 +237,65 @@ export default function HeatmapView() {
           </span>
         </div>
         {index.minYear !== null && index.maxYear !== null && (
+          index.minYear === index.maxYear ? (
+            // A single year cannot move a slider pair — show the fact plainly.
+            <p
+              className="mt-2 text-xs text-muted-foreground"
+              data-testid="heatmap-single-year"
+            >
+              Showing <span className="tabular-nums font-medium">{index.minYear}</span>{" "}
+              — the only year in your history.
+            </p>
+          ) : (
           <div className="mt-2 space-y-1.5">
+            <div className="flex flex-wrap items-center gap-1.5" role="group" aria-label="Range presets">
+              <button
+                type="button"
+                aria-pressed={fromYear === null && toYear === null}
+                onClick={() => { setFromYear(null); setToYear(null); }}
+                className={cn(
+                  "min-h-9 rounded-full border px-3 py-1 text-xs",
+                  fromYear === null && toYear === null
+                    ? "border-primary bg-accent font-medium"
+                    : "border-border hover:bg-muted",
+                )}
+              >
+                All time
+              </button>
+              <button
+                type="button"
+                aria-pressed={last12Months}
+                onClick={() => {
+                  setFromYear(new Date(mountedAtMs - 365 * 86_400_000).getFullYear());
+                  setToYear(index.maxYear);
+                }}
+                disabled={new Date(index.minYear + 1, 0, 1).getTime() > mountedAtMs}
+                className={cn(
+                  "min-h-9 rounded-full border px-3 py-1 text-xs disabled:pointer-events-none disabled:opacity-50",
+                  last12Months && !allTimeActive
+                    ? "border-primary bg-accent font-medium"
+                    : "border-border hover:bg-muted",
+                )}
+              >
+                Last 12 months
+              </button>
+              {individualYears.map((y) => (
+                <button
+                  key={y}
+                  type="button"
+                  aria-pressed={fromYear === y && toYear === y}
+                  onClick={() => { setFromYear(y); setToYear(y); }}
+                  className={cn(
+                    "min-h-9 rounded-full border px-3 py-1 text-xs tabular-nums",
+                    fromYear === y && toYear === y
+                      ? "border-primary bg-accent font-medium"
+                      : "border-border hover:bg-muted",
+                  )}
+                >
+                  {y}
+                </button>
+              ))}
+            </div>
             <label className="flex items-center gap-2 text-xs">
               <span className="w-10 shrink-0 text-muted-foreground">From</span>
               <input
@@ -261,6 +335,7 @@ export default function HeatmapView() {
               </span>
             </label>
           </div>
+          )
         )}
         <p className="mt-2 text-[10px] leading-relaxed text-muted-foreground">
           Glow intensity weights each place by total hours lived there — not

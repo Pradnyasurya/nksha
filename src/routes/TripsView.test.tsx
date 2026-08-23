@@ -41,11 +41,16 @@ describe("TripsView (#trips-ux)", () => {
     await disposeTestDb(db);
   });
 
-  it("hides Re-run suggestions until visits exist, then offers it", async () => {
+  it("disables Re-run suggestions until prerequisites exist, then offers it", async () => {
     const empty = openTestDb("trips-novisits");
     renderView();
     await screen.findByText("Create trip");
-    expect(screen.queryByRole("button", { name: /Re-run suggestions/ })).toBeNull();
+    // The button stays visible but disabled, and explains what is missing
+    // (#trips-onboarding) — a silent no-op button helps nobody.
+    const rerun = await screen.findByRole("button", { name: /Re-run suggestions/ });
+    expect((rerun as HTMLButtonElement).disabled).toBe(true);
+    expect(rerun.getAttribute("title")).toMatch(/Import your timeline first/i);
+    expect(document.body.textContent).toMatch(/declared Home|Choose Home/i);
     cleanup();
 
     await empty.places.put({
@@ -66,9 +71,10 @@ describe("TripsView (#trips-ux)", () => {
       createdAt: 0,
     });
     renderView();
-    expect(
-      await screen.findByRole("button", { name: /Re-run suggestions/ }),
-    ).toBeTruthy();
+    // Visits exist but Home is not chosen: still disabled, now offering Choose Home.
+    const rerun2 = await screen.findByRole("button", { name: /Re-run suggestions/ });
+    expect((rerun2 as HTMLButtonElement).disabled).toBe(true);
+    expect(await screen.findByTestId("choose-home")).toBeTruthy();
     await disposeTestDb(empty);
   });
 
